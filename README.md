@@ -36,6 +36,8 @@ The first target is **Elden Ring boss fights**.
 
 ## How it works
 
+The full design (every stage, config formats, packaging, testing) is in [docs/DESIGN.md](docs/DESIGN.md).
+
 ![Architecture diagram](docs/architecture.png)
 
 ```
@@ -221,6 +223,7 @@ Game-Commentor/
 │   ├── IMPLEMENTATION.md         # Who builds what: tracks, contracts, tasks, milestones, status
 │   └── architecture.png          # Architecture diagram
 ├── logs/                         # Dev-mode session logs (not committed)
+├── CLAUDE.md                     # Shared context for AI coding assistants
 ├── .gitignore
 └── README.md
 ```
