@@ -10,7 +10,7 @@ The first target is **Elden Ring boss fights**.
 
 ## What it does
 
-- Detects which game you're playing and finds its window automatically, on any monitor
+- Detects which game you're playing and finds its window automatically, on any monitor; if no known game is running, it shows a "Waiting for game to start" overlay and attaches as soon as one launches
 - Captures that window while you play
 - Sends the newest frame to a **vision LLM** along with the game config (the list of events to look for and their priorities) and the previous game state
 - The vision LLM reads the HUD and the scene (your HP, boss HP, "YOU DIED", "boss leaping into the air") and returns structured JSON: the current state plus **events with a priority**, such as `big_hit_landed`, `low_hp`, `you_died`, `boss_felled`
@@ -275,6 +275,6 @@ The full plan, with tasks, owners and status, is in [docs/IMPLEMENTATION.md](doc
 
 Built by **Welsby** and **Nathan** at [MakeFear Studios](https://github.com/MakeFear-Studios).
 
-- **Welsby**: seeing and shipping. Game detection, window capture, the vision LLM stage, dev mode and dashboard, packaging, installer and releases.
-- **Nathan**: thinking and speaking. Director, narrator and personas, text-to-speech, memory, engine controls, tray app and overlay.
+- **Welsby**: seeing and shipping. The vision LLM stage, dev mode and dashboard, packaging, installer and releases.
+- **Nathan**: thinking and speaking. Startup and game detection, window capture, director, narrator and personas, text-to-speech, memory, engine controls, tray app and overlay.
 
