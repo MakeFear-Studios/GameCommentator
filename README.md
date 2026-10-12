@@ -12,9 +12,9 @@ The first target is **Elden Ring boss fights**.
 
 - Detects which game you're playing and finds its window automatically, on any monitor
 - Captures that window while you play
-- Reads the game's HUD (your HP, boss HP, "YOU DIED", "ENEMY FELLED") with fast pixel checks
-- Uses a vision model to describe what's happening ("boss leaping into the air", "player summoned spirit ashes")
-- Turns changes between frames into **events** such as `big_hit_landed`, `low_hp`, `you_died`, `boss_felled`
+- Sends the newest frame to a **vision LLM** along with the game config (the list of events to look for and their priorities) and the previous game state
+- The vision LLM reads the HUD and the scene (your HP, boss HP, "YOU DIED", "boss leaping into the air") and returns structured JSON: the current state plus **events with a priority**, such as `big_hit_landed`, `low_hp`, `you_died`, `boss_felled`
+- Code validates that JSON against the game config and filters out repeats (e.g. "YOU DIED" staying on screen for several frames)
 - Decides **when** to speak and **what** to talk about using a priority queue:
   - `filler` / `normal` lines are dropped if something is already playing
   - `high` events are queued to play next
@@ -28,7 +28,7 @@ The first target is **Elden Ring boss fights**.
 - **Live, spoken commentary** on Elden Ring boss fights that feels responsive, not robotic
 - **Runs fully local and free** on a consumer GPU alongside the game (developed on an RTX 4070 Ti); no API keys required
 - **Modular by design**: three independent parts can be swapped without touching the engine:
-  - **Game config**: what to track and what counts as an event (`config/games/*.yaml`)
+  - **Game config**: how to recognise the game and which events to look for, with priorities (`config/games/*.yaml`)
   - **Persona**: how it talks: style, example lines, voice, chattiness (`config/personas/*.yaml`)
   - **Model backends**: local (Ollama, Kokoro, Piper) or API (OpenAI-compatible, Claude, Gemini, ElevenLabs)
 - **Download and run**: a Windows app (.exe) that runs alongside the game, not a mod
@@ -39,26 +39,50 @@ The first target is **Elden Ring boss fights**.
 ![Architecture diagram](docs/architecture.png)
 
 ```
-Detect game ──► Window capture ──► OpenCV checks (fast, ~100ms) ──┐
-                               └─► Vision model (~1s) ────────────┴─► Compare + rules ──► Director ──► Narrator LLM ──► TTS ──► Speaker
-                                                                      (state → events)   (priority,    (event → line)  (voice)  (stoppable)
-                                                                                          expiry,
-                                                                                          interrupts)
+Detect game ──► Window capture ──► Vision LLM ─────────────────────► Director ──► Narrator LLM ──► TTS ──► Speaker
+                (newest frame)     (frame + game config + last state  (priority,    (event → line)  (voice)  (stoppable)
+                                    → state + events with priority,    expiry,
+                                    validated JSON)                    interrupts)
 ```
 
 | Stage | Type | Job |
 |---|---|---|
 | Detection | Code | Work out which game is running and find its window |
-| Window capture | Code | Grab frames from the game window |
-| OpenCV checks | Code | Read HP bars, boss bar, death and victory screens |
-| Vision model (VLM) | Model | Describe the scene and anything unusual |
-| Compare + rules | Code | Compare the current state with the last one and emit events with priority and expiry |
+| Window capture | Code | Grab the newest frame from the game window |
+| Vision LLM | Model | Look at the frame with the game config and last state; return the current state and events with priorities as structured JSON |
+| Validation | Code | Check the JSON against the config, drop unknown events and repeats, attach expiry times |
 | Director | Code | Pick which event to narrate and when; handle queueing and interrupts |
 | Narrator | Model | Write one short line in the persona's style |
 | TTS | Model | Turn the line into speech |
 | Speaker | Code | Play audio in chunks so it can be cut off for critical events |
 
-**Design principle:** *models for perception and language, code for decisions.*
+**Design principle:** *models see and judge, code decides when to speak.* The vision LLM decides what happened and how important it is. Code keeps it honest (schema, known event types, de-duplication) and owns timing: queueing, expiry and interrupts.
+
+### What the vision LLM receives and returns
+
+**In:** the newest frame (downscaled), the game config's event catalogue, and the previous state.
+
+```yaml
+# config/games/elden_ring.yaml (excerpt)
+events:
+  you_died:       { priority: critical, ttl: 5.0, look_for: "Large red 'YOU DIED' text in the centre of the screen" }
+  boss_felled:    { priority: critical, ttl: 6.0, look_for: "Gold 'ENEMY FELLED' / 'GREAT ENEMY FELLED' text" }
+  big_hit_landed: { priority: high,     ttl: 2.5, look_for: "Boss health bar drops sharply compared with the last state" }
+  low_hp:         { priority: high,     ttl: 3.0, look_for: "Player's red health bar (top left) below about a quarter" }
+  healed:         { priority: normal,   ttl: 3.0, look_for: "Player drinks a flask; health bar rises" }
+```
+
+**Out:** structured JSON, forced into a schema built from the config:
+
+```json
+{
+  "state":  { "player_hp": 34, "boss_hp": 18, "boss_name": "Margit, the Fell Omen", "flasks": 1 },
+  "events": [ { "type": "big_hit_landed", "priority": "high", "detail": "Charged greatsword hit, boss 27% to 18%" } ],
+  "scene":  "Margit leaps into the air with a golden hammer while the player rolls away"
+}
+```
+
+The vision LLM runs as fast as the model allows (about once a second on a 4070 Ti with a 3B model), always on the newest frame.
 
 ## Memory
 
@@ -94,7 +118,7 @@ Code calculates the stats and a **context builder** turns them into a few short 
 Game Commentator is a **Windows companion app** that runs alongside the game. It is not a mod: nothing is injected into the game, so it works with anti-cheat and isn't tied to one game.
 
 - **Finds the game automatically.** Each game config says how to recognise its game (process name, window title). The app checks what's running, loads the matching config, and falls back to a generic vision-only mode for any other game. You can always pick the game or window manually.
-- **Follows the game window, not the screen.** It captures only the game's window, so it works on any monitor, keeps up if the window moves, and pauses when you alt-tab. HUD positions are stored as fractions of the window, so any resolution works.
+- **Follows the game window, not the screen.** It captures only the game's window, so it works on any monitor, keeps up if the window moves, and pauses when you alt-tab. Frames are downscaled before the vision LLM sees them, so any resolution works.
 - **One engine, several front ends.** The engine exposes simple controls (start, stop, mute, switch persona), and each way of running it just calls those:
   - **Command line**: `python main.py`, for development
   - **Tray app**: runs in the background with global hotkeys (hotkeys only listen; nothing is sent to the game)
@@ -114,8 +138,7 @@ Every stage reports what it's doing as a small structured event on an internal *
 
 ```
  capture ─┐
- watcher ─┤
- rules ───┤                       ┌──► logs/<session>/events.jsonl   (everything, one file)
+ vision ──┤                       ┌──► logs/<session>/events.jsonl   (everything, one file)
  director ┼──► Event bus ──► Dev logger
  narrator ┤                       └──► live stream ──► Dev dashboard (browser)
  voice ───┤
@@ -128,18 +151,18 @@ Every stage reports what it's doing as a small structured event on an internal *
 
 - **One log per session:** `logs/<session>/events.jsonl` (JSON Lines), plus a sampled frame every few seconds so you can see what the model saw.
 - **Dev dashboard:** a local web page that follows events live, or opens an old session log and replays it.
-- **Replay for testing:** the same log replays through rules and the director offline, so tuning doesn't need the game running.
+- **Replay for testing:** the vision LLM's recorded events replay through the director, narrator and voice offline, so tuning doesn't need the game running.
 - **Zero cost when off:** without `--dev`, nothing is written.
 - **Decoupled:** stages only publish events and don't know the dashboard exists, so it can change freely.
 
-What the dashboard shows will be decided once real logs exist. Candidates: the live frame with HUD crop boxes drawn, HP graphs, an event timeline coloured by priority, the director's queue with expiry countdowns, narrator prompts and responses, memory contents, and latency per stage.
+What the dashboard shows will be decided once real logs exist. Candidates: the frame the vision LLM saw next to the JSON it returned, HP graphs, an event timeline coloured by priority, the director's queue with expiry countdowns, narrator prompts and responses, memory contents, and latency per stage.
 
 ## Tech stack
 
 - **Python 3.12**
 - **Game detection:** `psutil`, Win32 window APIs
 - **Window capture:** `windows-capture` (Windows Graphics Capture), `mss` fallback
-- **Vision:** OpenCV, Qwen2.5-VL / Moondream (via Ollama)
+- **Vision:** vision LLM (Qwen2.5-VL / Gemma 3 / Moondream via Ollama) with structured JSON output
 - **Language:** small local LLMs via Ollama, or any OpenAI-compatible API
 - **Speech:** Kokoro / Piper
 - **Config:** YAML
@@ -153,11 +176,11 @@ What the dashboard shows will be decided once real logs exist. Candidates: the l
 Game-Commentor/
 ├── main.py                       # Entry point (command line)
 ├── commentator/                  # The engine: one folder per part
+│   ├── core/                     # Shared types (GameEvent, Priority, ...), config loading, paths
 │   ├── engine/                   # Runs the pipeline; start / stop / mute / switch persona
 │   ├── detection/                # Which game is running + find its window
 │   ├── capture/                  # Window capture
-│   ├── watcher/                  # OpenCV checks + vision model → game state
-│   ├── rules/                    # Compare states → events (priority + expiry)
+│   ├── vision/                   # Vision LLM: frame + game config + last state → state + events; validation, de-duplication
 │   ├── director/                 # Priority queue, expiry, interrupts
 │   ├── narrator/                 # LLM → commentary line
 │   ├── voice/                    # TTS + stoppable playback
@@ -166,20 +189,21 @@ Game-Commentor/
 │   ├── events/                   # Event bus, event types, dev logger
 │   └── ui/                       # Front ends: command line, tray app, subtitle overlay, dev dashboard
 ├── config/                       # Everything you can swap without touching code
-│   ├── games/                    # How to recognise each game, what to track, what counts as an event
-│   │   ├── generic.yaml          # Works in any game (vision model only)
-│   │   ├── elden_ring.yaml       # Process match, HUD regions, tracked stats, events
-│   │   └── refs/                 # Reference images (YOU DIED, ENEMY FELLED)
+│   ├── games/                    # How to recognise each game, which events to look for, priorities
+│   │   ├── generic.yaml          # Works in any game
+│   │   ├── elden_ring.yaml       # Process match, state fields, event catalogue
+│   │   └── examples/             # Optional example frames shown to the vision LLM
 │   ├── personas/                 # How the commentator talks
 │   │   ├── sports_caster.yaml
 │   │   └── dark_narrator.yaml
 │   └── backends.yaml             # Which model runs each stage (local or API)
 ├── packaging/                    # PyInstaller spec + Inno Setup script (installer.iss)
 ├── .github/workflows/            # release.yml: version tag → build → installer → GitHub Release
+├── experiments/                  # Throwaway spikes (e.g. vision model tests on screenshots)
 ├── tests/
 ├── docs/
 │   ├── DESIGN.md                 # What and why: architecture, key decisions, principles
-│   ├── IMPLEMENTATION.md         # How: module-by-module guide, interfaces, build status
+│   ├── IMPLEMENTATION.md         # Who builds what: tracks, contracts, tasks, milestones, status
 │   └── architecture.png          # Architecture diagram
 ├── logs/                         # Dev-mode session logs (not committed)
 ├── .gitignore
@@ -216,18 +240,23 @@ python main.py
 
 ## Roadmap
 
-1. Test the vision model and HUD reading on Elden Ring boss-fight screenshots
-2. Packaging smoke test: build the .exe and a basic installer early
-3. Event bus and dev logger, then game detection + window capture → game state in the dev log
-4. Rules → events
-5. Director + narrator → commentary lines (text only)
-6. Text-to-speech with stoppable playback and interrupts
-7. Dev dashboard
-8. Fight memory, then session memory and context builder
-9. Game configs, personas, swappable backends, replay from dev logs, tests
-10. Tray app with global hotkeys
-11. Subtitle overlay
-12. Full installer (installs Ollama, optional model download), first-run checks, automated releases
+The full plan, with tasks, owners and status, is in [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md).
+
+| Milestone | What works |
+|---|---|
+| **M0 Foundations** | Repo skeleton, shared types, event bus, CI |
+| **M1 First words** | A recorded boss fight replays into in-character text commentary |
+| **M2 Live text** | Live game → vision LLM → director → narrator, printed as text |
+| **M3 It talks** | Spoken commentary with interrupts |
+| **M4 Smart** | Fight and session memory; dev dashboard |
+| **M5 v0.1.0** | Tray app, overlay, one-click installer on GitHub Releases |
 
 **Stretch goals:** two casters (play-by-play + colour commentary), OBS browser source, auto-clipped highlights.
+
+## Team
+
+Built by **Welsby** and **Nathan**.
+
+- **Welsby**: seeing and shipping. Game detection, window capture, the vision LLM stage, dev mode and dashboard, packaging, installer and releases.
+- **Nathan**: thinking and speaking. Director, narrator and personas, text-to-speech, memory, engine controls, tray app and overlay.
 
