@@ -154,7 +154,7 @@ filler:   [ scene_update ← top ]
 - Take the top of the **highest non-empty stack**; the rest of that stack goes to the narrator as context, so one line can cover several events.
 - **Expired events are dropped** whenever a stack is read; each stack keeps only its few newest events.
 - **Expiry is measured from capture time** (`GameEvent.t` is when the screenshot was taken), not arrival time: vision takes 1–2 s, so events are already old when they arrive.
-- A new event of the **same type** as one already waiting or being spoken is **merged** (counted) instead of added, so a burst becomes one line: *"…and ANOTHER one!"*
+- A new event of the **same type** as one already waiting is **merged** (counted) instead of added; one of the same type as the line on air or being written is dropped as **covered**. A burst becomes one line, and a later line can say *"…and ANOTHER one!"* from the counts.
 - **Cooldowns** (game config per event, persona per category) stop it talking non-stop. Silence is a normal outcome.
 
 #### Fluent timing
@@ -168,7 +168,9 @@ What makes AI commentary sound natural is mostly **no awkward gaps and few self-
    - Otherwise, when the remaining speech time is less than the **preparation lead time** (measured narrator + TTS latency, as a running average), **prepare the next line now**, so it's ready the moment the voice finishes.
 4. **Voice idle and the persona's `min_gap_s` has passed?** Speak the prepared line if it still passes the re-check; otherwise ask for one.
 5. **Quiet for longer than `max_silence_s`?** Ask for a `colour` line (from memory) or a filler line; the narrator may answer "nothing to say".
-6. **Re-check before speaking**: not expired, not superseded by a higher-priority event, and still true for the **latest state** (a prepared "one flask left!" is dropped if the player has since healed). Dropped lines are logged with the reason.
+6. **Re-check before speaking**: not expired, not superseded by a higher-priority event, and still true for the **latest state** (a prepared "one flask left!" is dropped if the player has since healed: the game config says `healed` `cancels` `out_of_flasks`; a change in a `context_fields` value such as `boss_name` also makes a line stale). Dropped lines are logged with the reason. Only a superseded line's events go back on the stack; stale or expired ones are gone.
+
+Lines are handed to the voice early by the measured TTS start-up time, so the audio starts as the gap ends. Critical lines never wait for a gap.
 
 **Interrupt levels**
 
@@ -187,14 +189,14 @@ What makes AI commentary sound natural is mostly **no awkward gaps and few self-
 
 | Mode | Used for | Typical length |
 |---|---|---|
-| `reaction` | Critical moments | Very short (about 8 words) |
-| `play_by_play` | High and normal events during action | Short (about 14 words) |
-| `colour` | Quiet spells: analysis and stats from memory | Longer (about 22 words) |
+| `reaction` | Critical moments | Very short (about 6 words) |
+| `play_by_play` | High and normal events during action | Short (about 10 words) |
+| `colour` | Quiet spells: analysis and stats from memory | Longer (about 18 words) |
 | `filler` | Scene remarks when nothing else is happening | Short |
 
-`max_words` comes from the mode, the persona's limits and the time available (`words_per_second` × seconds until the next line is likely needed), and is enforced in code.
+`max_words` comes from the mode and the persona's limits, shortened to `words_per_second` × `backlog_line_s` while other events are still waiting, and is enforced in code. Human commentators average about 2.8 s per line, so the defaults are about 2–4 s.
 
-**Let big moments breathe:** after a critical line, hold `after_critical_pause_s` (about 2 s) of deliberate silence, then allow a `colour` reaction ("Attempt 12, and he FINALLY has it!").
+**Let big moments breathe:** after a critical line, hold `after_critical_pause_s` (about 2 s) of deliberate silence, then allow a `colour` reflection ("Attempt 12, and he FINALLY has it!") if memory has something to say. Another critical event skips the pause.
 
 Example:
 ```
@@ -318,8 +320,9 @@ chattiness:
   min_gap_s: 1.5            # pause between lines
   max_silence_s: 6.0        # after this, a colour or filler line is allowed
   words_per_second: 2.8     # TTS speaking rate, to turn time into words
-  max_words: { reaction: 8, play_by_play: 14, colour: 22, filler: 12 }
-  interrupts: { min_on_air_s: 0.8, window_s: 4.0, max_in_window: 1 }
+  max_words: { reaction: 6, play_by_play: 10, colour: 18, filler: 10 }
+  cooldown_s: { normal: 3.0, filler: 15.0 }   # since the last line of that priority
+  interrupts: { min_on_air_s: 0.8, window_s: 4.0, max_in_window: 1, soft_min_remaining_s: 1.5 }
   after_critical_pause_s: 2.0
   use_filler: true
 interrupt_sound: "OH—"
@@ -432,7 +435,7 @@ Ollama (separate program)            ← installed by our installer if missing; 
 ## 9. Testing strategy
 
 - **Director:** fake clock, fake voice and fake narrator; tests for newest-first within a level, priority beating recency, the stack cap, expiry from capture time, merging, interrupt levels and limits, preparing lines early, and the re-check against the latest state.
-- **Fluency report:** replays produce overlap %, mean gap, interrupts per minute and dropped events, so timing changes are judged by numbers (targets: 0% overlap, mean gap under 2 s, at most 2 non-critical interrupts per minute).
+- **Fluency report:** replays produce overlap %, mean gap, interrupts per minute and dropped events, so timing changes are judged by numbers (targets: 0% overlap, mean gap under 2 s or the persona's `min_gap_s` + 0.5 s, at most 2 non-critical interrupts per minute). `commentator/director/sim.py` runs scenarios in simulated time with a fake vision source, narrator and voice.
 - **Vision validation:** recorded model outputs → schema checks, unknown events dropped, cooldown de-duplication.
 - **Prompt and schema generation:** snapshot tests from the game config.
 - **Memory:** fight summaries and the session memory size cap, from recorded event logs.

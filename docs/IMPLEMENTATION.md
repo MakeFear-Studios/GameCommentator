@@ -82,19 +82,20 @@ class GameEvent:
     detail: str            # short description from the vision LLM
     t: float               # time.monotonic() when the screenshot was captured (Frame.t), not when it arrived
     source: str = "vision" # "vision" | "replay" | "fake"
+    # .expires_at = t + ttl
 
 @dataclass(frozen=True)
 class GameState:
-    fields: dict[str, Any] # what this screenshot shows, e.g. {"player_hp": 34, "boss_hp": 18}; keys from the game config
-    scene: str | None      # one-sentence description of this screenshot
+    fields: Mapping[str, Any] = {}  # what this screenshot shows, e.g. {"player_hp": 34}; keys from the game config
+    scene: str | None = None        # one-sentence description of this screenshot
 
 @dataclass(frozen=True)
 class VisionResult:
     """What the vision stage saw in ONE screenshot. No history: the director keeps that."""
     state: GameState
-    events: list[GameEvent]
+    events: tuple[GameEvent, ...]
     frame_t: float         # Frame.t of the screenshot
-    latency_ms: float      # how long vision took
+    latency_ms: float = 0  # how long vision took
 
 class VisionSink(Protocol):
     def submit(self, result: VisionResult) -> None: ...   # implemented by the director; must not block
@@ -122,7 +123,7 @@ class VisionSource(Protocol):
     def results(self) -> Iterator[VisionResult]: ...   # in capture-time order
 ```
 
-Implementations: `ReplayVisionSource` (reads `events.jsonl`, Track A), `FakeVisionSource` (scripted scenarios, Track B). A small pump feeds a source into a `VisionSink` at the recorded pace.
+Implementations: `ReplayVisionSource` (reads `events.jsonl`, Track A), `FakeVisionSource` (scripted scenarios, Track B, in `commentator/director/sim.py`). A small pump feeds a source into a `VisionSink` at the recorded pace.
 
 ### Frames: capture → vision (`commentator/core/types.py`)
 
@@ -157,15 +158,18 @@ class Delivery(StrEnum):
 @dataclass(frozen=True)
 class NarrationRequest:
     id: int
-    event: GameEvent                 # top of the highest non-empty stack
-    related: list[GameEvent]         # rest of that stack, newest first, merged counts included
+    event: GameEvent | None          # top of the highest non-empty stack; None for a colour line in a quiet spell
+    related: tuple[GameEvent, ...]   # rest of that stack, newest first
+    counts: Mapping[str, int]        # event type -> times seen (merged repeats), e.g. {"big_hit_landed": 3}
     state: GameState                 # latest state
-    state_change: dict[str, tuple[Any, Any]]  # field -> (at the last line, now), e.g. {"boss_hp": (27, 18)}
-    memory: list[str]                # short facts from memory (B4); empty until it exists
-    recent_lines: list[str]          # last ~5 spoken lines, to avoid repeats
+    state_change: Mapping[str, tuple[Any, Any]]  # field -> (at the last line, now), e.g. {"boss_hp": (27, 18)}
+    memory: tuple[str, ...]          # short facts from memory (B4); empty until it exists
+    recent_lines: tuple[str, ...]    # last few spoken lines, to avoid repeats
     mode: Mode
-    max_words: int                   # from mode, persona and time available
+    priority: Priority               # of the chosen event (FILLER for colour lines)
+    max_words: int                   # from mode, persona and backlog
     delivery: Delivery
+    created_at: float                # monotonic
     expires_at: float                # monotonic; don't speak after this
 
 class Narrator(Protocol):
@@ -175,8 +179,9 @@ class Narrator(Protocol):
 class CommentaryLine:
     request_id: int
     text: str | None                 # None = "nothing to say" (allowed for colour / filler)
-    event: GameEvent
+    event: GameEvent | None
     priority: Priority
+    mode: Mode
     delivery: Delivery
     created_at: float
     expires_at: float
@@ -193,11 +198,11 @@ class SpeechStatus:
     remaining_s: float | None = None # on ENDING / progress updates
 
 class Voice(Protocol):
-    def play(self, line: CommentaryLine) -> None: ...      # queued or soft: after the current sentence
+    def play(self, line: CommentaryLine) -> None: ...      # QUEUED: voice is free; SOFT_INTERRUPT: after the current sentence
     def interrupt(self, line: CommentaryLine) -> None: ...  # hard: cut now, interrupt sound, then the line
 ```
 
-The narrator and voice report back (`CommentaryLine`, `SpeechStatus`) through the director's inbox queue; the director re-checks every line (expiry, superseded, still true for the latest state) before passing it to voice.
+The narrator and voice report back through `Director.on_line` and `Director.on_speech`, which only queue into the director's inbox. The director re-checks every line (expiry, superseded, still true for the latest state) before passing it to voice.
 
 ### Log bus and log format (`commentator/logs/`) ✅ implemented
 
@@ -237,9 +242,11 @@ events:
   you_died:       { priority: critical, ttl: 5.0, cooldown: 10, look_for: "Large red 'YOU DIED' text in the centre" }
   boss_felled:    { priority: critical, ttl: 6.0, cooldown: 30, look_for: "Gold 'ENEMY FELLED' / 'GREAT ENEMY FELLED' text" }
   big_hit_landed: { priority: high,     ttl: 2.5, cooldown: 2,  look_for: "Boss health drops sharply compared with the last state" }
+  healed:         { priority: normal,   ttl: 3.0, cooldown: 3,  cancels: [low_hp, out_of_flasks], look_for: "..." }
+context_fields: [boss_name]   # if one of these changes, lines written before are stale
 ```
 
-The vision prompt and the JSON schema are **generated from this file**, so adding an event means editing YAML only.
+The vision prompt and the JSON schema are **generated from this file**, so adding an event means editing YAML only. Two optional keys are for the director: `cancels` (seeing this event makes lines about the listed events untrue, so they're dropped before speaking) and `context_fields`.
 
 ### Threading model
 
@@ -312,18 +319,18 @@ Design: [DESIGN.md § 4.4](DESIGN.md#44-director-when-to-speak-and-what-about). 
 
 | ID | Task | Status |
 |---|---|---|
-| B1.0 | **Contract PR** (`core/types.py`, label `contract`): `Priority`, `GameEvent` (capture-time `t`), `GameState`, `VisionResult`, `VisionSink`, `VisionSource`, `Mode`, `Delivery`, `NarrationRequest`, `Narrator`, `CommentaryLine`, `SpeechStatus`, `Voice`; persona `chattiness` loading | ⬜ |
-| B1.1 | Test doubles: `FakeVisionSource` scenarios ("boss fight ending in death", "burst of five hits in two seconds", "quiet exploration"), **fake voice** (reports durations, can be interrupted), **fake narrator** (adjustable delay, word count) | ⬜ |
-| B1.2 | `director/stacks.py` + `intake.py`: one LIFO stack per priority, capped (e.g. 5 newest); expiry from capture time, dropped on every read; same-type merging; cooldowns; state history and `state_change` | ⬜ |
-| B1.3 | `speech.py` + `timing.py`: track the current line and its remaining time; running averages of narrator and TTS latency; **prepare the next line** when remaining time < lead time; `min_gap_s` between lines | ⬜ |
-| B1.4 | `policy.py`: interrupt levels (hard / soft / none) and limits (`min_on_air_s`, `max_in_window` per `window_s`, no same-priority interrupt of an interrupt) | ⬜ |
-| B1.5 | Re-check before speaking (expired, superseded, contradicted by the latest state); discard and re-prepare lines | ⬜ |
-| B1.6 | `context.py`: build `NarrationRequest`s; modes, `max_words`, pause after critical, colour / filler after `max_silence_s` | ⬜ |
-| B1.7 | Publish `event_pushed` / `event_merged` / `event_dropped` (reason: expired, capped, superseded, cooldown, stale_state) / `event_chosen` / `line_prepared` / `line_discarded` / `interrupt` / `silence_chosen`; **fluency report** from replays (overlap %, mean gap, interrupts per minute, drops) | ⬜ |
+| B1.0 | **Contract PR** (`core/types.py`, label `contract`): `Priority`, `GameEvent` (capture-time `t`), `GameState`, `VisionResult`, `VisionSink`, `VisionSource`, `Mode`, `Delivery`, `NarrationRequest`, `Narrator`, `CommentaryLine`, `SpeechStatus`, `Voice`; persona `chattiness` and game `cancels` / `context_fields` loading (`core/config.py`). *Implemented; needs Welsby's approval.* | 🟨 |
+| B1.1 | `director/sim.py`: `FakeVisionSource` scenarios ("boss fight ending in death", "burst of hits", "quiet exploration", "heal cancels low HP"), **fake voice** (real durations, hard / soft interrupts, overlaps if misused), **fake narrator** (adjustable delay and words), `Simulation` runner | ✅ |
+| B1.2 | `director/stacks.py` + `history.py`: one LIFO stack per priority, capped; expiry from capture time, dropped on every read; same-type merging; repeats of the event being talked about dropped as `covered`; cooldowns; state history and `state_change` | ✅ |
+| B1.3 | `speech.py` + `timing.py`: track the current line and its remaining time; running averages of narrator and TTS latency; **prepare the next line** when the time until the voice is free < lead time; lines handed over early by the TTS start-up time so audio starts as the gap ends | ✅ |
+| B1.4 | `policy.py`: interrupt levels (hard / soft / none) and limits (`min_on_air_s`, `max_in_window` per `window_s`, only strictly more important events interrupt) | ✅ |
+| B1.5 | Re-check before speaking (expired, superseded, `stale_state` from `cancels` or a `context_fields` change); superseded lines' events go back on the stack, stale or expired ones don't | ✅ |
+| B1.6 | `context.py`: build `NarrationRequest`s; modes, `max_words` (shorter when a backlog is waiting), pause after critical then a colour reflection, colour / filler after `max_silence_s` | ✅ |
+| B1.7 | Publish `event_pushed` / `event_merged` / `event_dropped` (reason: expired, capped, covered, ignored, filler_off) / `event_chosen` / `line_prepared` / `line_sent` / `line_discarded` (superseded, expired, stale_state, late) / `line_ended` / `interrupt` / `silence_chosen`; **fluency report** (`fluency.py`: overlap %, mean gap, longest silence, interrupts per minute, drops) | ✅ |
 
-All director tests run on a fake clock with the fake voice and narrator.
+All director tests run on a fake clock with the fake voice and narrator (`tests/director/`, 100% line coverage of `director.py`).
 
-**Done when:** scenarios produce the right lines at the right times with the right drops, all covered by tests, and the fluency report meets its targets on every scenario: 0% overlap, mean gap under 2 s, at most 2 non-critical interrupts per minute, critical events reach the voice within one tick.
+**Done when:** scenarios produce the right lines at the right times with the right drops, all covered by tests, and the fluency report meets its targets on every scenario for every persona: 0% overlap, mean gap under 2 s (or the persona's `min_gap_s` + 0.5 s if it's slower on purpose), at most 2 non-critical interrupts per minute, critical events requested within one tick of arriving. *Met in tests; not yet run with a real narrator and voice.*
 
 ### B2. Narrator + personas
 | ID | Task | Status |
@@ -408,6 +415,9 @@ A1 and B1 can both start during Phase 0: the spike needs no app code, and the di
 | **Prepare the next line while the current one plays.** The director asks the narrator early (lead time = measured narrator + TTS latency) and re-checks the line before speaking. | Research: parallel preparation cut silences from ~9.5 s to ~0.3 s and sounded more natural ([arXiv 2606.13322](https://arxiv.org/html/2606.13322v1)). | Some prepared lines are thrown away when something better happens; cheap with local models. |
 | **Three interrupt levels with limits.** Hard (critical, cut now), soft (high, after the current sentence, only for long lower-priority lines), none. Minimum time on air, max interrupts per window. | Stops the caster cutting itself off while still reacting instantly to deaths and kills. | Some high events are spoken a second later than they could be. Limits are persona settings, so they can be tuned. |
 | **Expiry from capture time; re-check against the latest state.** | Vision results are already 1–2 s old; a line can become false (e.g. after a heal) while it's being written. | Slightly more lines dropped; each drop is logged with its reason. |
+| **Shorter default lines** (reaction 6, play-by-play 10, colour 18, filler 10 words: about 2–4 s). | Human commentators average about 2.8 s per line; 14-word play-by-play lines (5 s) made most high events expire while they played. | Less room for flourish; personas can raise the caps. |
+| **Repeats of the event being talked about are `covered`, not queued.** | A burst of hits becomes one line instead of a pile of stale events. | The line can't mention hits that land after it was written; the next line's `counts` can. |
+| **Critical lines never wait for a gap.** A second critical event follows the first as soon as it ends (no post-critical pause), without interrupting it. | Urgency beats breathing room. | Back-to-back critical lines can feel rushed; rare in practice. |
 | **Memory is in RAM only** (fight + session memory). | Keep it simple; important facts live in the narrator's context. | Nothing carries over between sessions. |
 | **Windows companion app, not a mod.** | Works with anti-cheat, works with any game. | Needs window capture and a screen-reading approach. |
 | **Inno Setup installer that installs Ollama.** | One-click setup for non-technical users; models stay swappable. | Unsigned installer shows a SmartScreen warning. |
