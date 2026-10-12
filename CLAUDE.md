@@ -47,7 +47,7 @@ Stay inside the owner's folders for the task at hand. Track B builds against `Fa
 
 ## Conventions
 
-- Python 3.12, Windows. Run with `python main.py` (`--dev`, `--game`, `--persona`).
+- Python 3.13, Windows. Use the repo's virtual environment: `py -3.13 -m venv .venv`, then `.venv\Scripts\Activate.ps1` (or call `.venv\Scripts\python.exe` directly). Run with `python main.py` (`--dev`, `--game`, `--persona`); test with `python -m pytest tests`.
 - Type hints; ruff for lint and format; pytest for tests. Director logic is tested with a fake clock.
 - Branches: `welsby/<topic>` or `nathan/<topic>`, one per task ID. `main` is protected; PRs need a review from the other person; squash merge.
 - PR titles start with the task ID, e.g. `B1.2: director priority stack`. Keep PRs small.

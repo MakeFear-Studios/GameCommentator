@@ -166,7 +166,7 @@ logs/2026-10-12_15-30-04/        # local start time; "_2", "_3", … if the name
   "ended_at": "2026-10-12T15:42:10.987654+01:00",
   "events_written": 5123,
   "events_dropped": 0,
-  "python": "3.12.5",
+  "python": "3.13.5",
   "platform": "Windows-11-…",
   "app": { "game": "elden_ring", "persona": "dark_narrator" }
 }

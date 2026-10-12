@@ -180,7 +180,7 @@ What the dashboard shows will be decided once real logs exist. Candidates: the f
 
 ## Tech stack
 
-- **Python 3.12**
+- **Python 3.13**
 - **Game detection:** `psutil`, Win32 window APIs
 - **Window capture:** `windows-capture` (Windows Graphics Capture), `mss` fallback
 - **Vision:** vision LLM (Qwen2.5-VL / Gemma 3 / Moondream via Ollama) with structured JSON output
@@ -253,13 +253,30 @@ The installer isn't code-signed yet, so Windows may show "Windows protected your
 
 ### Run from source (developers)
 
-Requires Python 3.12+.
+Requires **Python 3.13** on Windows.
 
 ```bash
 git clone git@github.com:MakeFear-Studios/Game-Commentor.git
 cd Game-Commentor
-python main.py
 ```
+
+Create a virtual environment with Python 3.13 and install the dependencies (in PowerShell):
+
+```powershell
+py -3.13 -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install pytest numpy
+```
+
+Then run the app and the tests:
+
+```bash
+python main.py
+python main.py --dev
+python -m pytest tests
+```
+
+Until `pyproject.toml` lands (task 0.2), the only dependencies are `pytest` and `numpy` (both for tests). `.venv/` is git-ignored.
 
 ## Roadmap
 
