@@ -25,7 +25,7 @@ The pipeline splits cleanly at the **event stream**. Track A produces `GameEvent
 
 | | **Welsby: Track A, "see and ship"** | **Nathan: Track B, "think and speak"** |
 |---|---|---|
-| Owns | `vision/`, `events/`, `ui/dev/`, `config/games/`, `packaging/`, `.github/` | `detection/`, `capture/`, `director/`, `narrator/`, `voice/`, `memory/`, `engine/`, `ui/` (cli, tray, overlay), `config/personas/` |
+| Owns | `vision/`, `logs/`, `ui/dev/`, `config/games/`, `packaging/`, `.github/` | `detection/`, `capture/`, `director/`, `narrator/`, `voice/`, `memory/`, `engine/`, `ui/` (cli, tray, overlay), `config/personas/` |
 | Backends | Vision + text LLM adapter (OpenAI-compatible / Ollama) | TTS adapters (Kokoro, Piper); API adapters (Claude, Gemini) |
 | Needs Elden Ring? | Yes | No: works from fake and recorded events |
 | ML / AI | Multimodal LLM: prompts from config, structured output, validation | Narrator prompting, personas, memory and context design |
@@ -47,10 +47,10 @@ Goal: agree the contracts and set up the repo so we can split. Split the tasks, 
 
 | ID | Task | Owner | Status |
 |---|---|---|---|
-| 0.1 | Merge `initial-setup` into `main`, make `main` the default branch, protect it (PRs + 1 review required) | Welsby | ⬜ |
-| 0.2 | `pyproject.toml` with dependency groups (`dev`, `vision`, `voice`, `ui`, `build`), ruff, pytest, pre-commit | Welsby | ⬜ |
-| 0.3 | GitHub Actions CI: lint + tests on every PR (Windows runner) | Welsby | ⬜ |
-| 0.4 | `events/`: event bus (`publish` / `subscribe`) and dev logger writing `logs/<session>/events.jsonl` with `--dev` | Welsby | ⬜ |
+| 0.1 | Merge `initial-setup` into `main`, make `main` the default branch, protect it (PRs + 1 review required). *Merged; default branch and protection still to set in GitHub settings.* | Welsby | 🟨 |
+| 0.2 | `pyproject.toml` (`requires-python = ">=3.13,<3.14"`) with dependency groups (`dev`, `vision`, `voice`, `ui`, `build`), ruff, pytest, pre-commit | Welsby | ⬜ |
+| 0.3 | GitHub Actions CI: lint + tests on every PR (Windows runner, Python 3.13) | Welsby | ⬜ |
+| 0.4 | `logs/`: log bus (`publish` / `subscribe`), dev logger writing `logs/<session>/`, log reader, Python `logging` bridge, `--dev` / `GAME_COMMENTATOR_DEV=1` in `main.py` with crash recording and .exe-aware log location, tests. See `commentator/logs/README.md`. *0.5 extends `main.py`'s parser; 0.7 takes over `default_log_root()`.* | Welsby | ✅ |
 | 0.5 | Package skeleton: every folder from the README with `__init__.py`; `main.py` parses `--dev`, `--game`, `--persona` | Nathan | 🟨 |
 | 0.6 | `core/types.py`: `Priority`, `GameEvent`, `GameState`, `VisionResult`, `CommentaryLine` (see Contracts) | Nathan | ⬜ |
 | 0.7 | `core/config.py`: load and validate game, persona and backend YAML (pydantic); `core/paths.py` for config, user data and models dirs | Nathan | ⬜ |
@@ -140,18 +140,29 @@ class FrameSink(Protocol):
 
 Capture calls `submit` from its tracking thread (up to 4 times a second) with each new frame while the game is focused. Paused frames and frames from before a resume are never sent. The vision stage implements `FrameSink`: keep only the newest frame and analyse it when the model is free. Until then, `NullFrameSink` accepts frames and does nothing. Exceptions from `submit` are logged as `sink_error` and don't stop capture.
 
-### Event bus and log format (`commentator/events/`)
+### Log bus and log format (`commentator/logs/`) ✅ implemented
 
 ```python
-bus.publish(stage="vision", type="result", data={...})
-bus.subscribe(callback)            # dev logger, dashboard, tests
+from commentator.logs import bus
+
+bus.publish("director", "event_dropped", {"event": "healed", "reason": "expired"})   # level="info" by default
+bus.publish("vision", "model_timeout", {"model": "qwen2.5vl:3b"}, level="warning")
+bus.subscribe(callback)            # dev logger, dashboard, tests; callback(LogEvent) runs on the bus thread
 ```
 
-One JSON object per line in `logs/<session>/events.jsonl`:
+- **Observation only.** Stages pass real data through their own queues; the pipeline must behave the same with no subscribers.
+- **Never blocks.** `publish` returns immediately; a background thread delivers. With no subscribers it does nothing.
+- **Bounded buffer** (10,000 events): when full, the oldest are dropped and a `logs / events_dropped` warning is emitted with the count.
+- **Conventions:** `stage` = package name; `type` = snake_case past tense; `data` = small, flat, JSON-friendly (images go to `DevLogger.save_frame()` and are referenced by path); `level` ∈ `debug | info | warning | error`.
+- **Python `logging`:** `capture_python_logging(bus)` forwards library warnings and errors as `stage="log"`, `type="log_record"`.
+
+One JSON object per line in `logs/<session>/events.jsonl` (`t` = seconds since start, monotonic; `seq` = strict order):
 
 ```json
-{"t": 12.43, "stage": "director", "type": "event_dropped", "data": {"event": "healed", "reason": "expired"}}
+{"seq": 42, "t": 12.43, "stage": "director", "type": "event_dropped", "level": "info", "data": {"event": "healed", "reason": "expired"}}
 ```
+
+The session folder also has `session.json` (format version, start and end wall-clock time, counts, app info) and `frames/`. The first and last events are `logs / session_started` and `logs / session_ended`. `read_log(path)` reads a log back as `LogEvent`s.
 
 Every stage publishes its key decisions (frame captured, vision result, event pushed / dropped / spoken, narrator prompt and reply, TTS timing).
 
@@ -331,3 +342,4 @@ A1 and B1 can both start during Phase 0: the spike needs no app code, and the di
 | **Nathan owns startup, detection and capture (A2).** | Nathan is building them now. | Track A is now vision, events, dev dashboard and packaging. |
 | **Wait for the game instead of falling back to `generic.yaml`.** On launch with no known game running, show a "Waiting for game to start" overlay and attach when it starts. | Launching the app should just work, whatever order things start in. | The overlay needs a desktop (floating) mode before it docks to the game. `generic.yaml` stays available from the tray. |
 | **Threads + queues between stages.** | Model calls and audio are blocking; simple to reason about. | Revisit asyncio if the dashboard or overlay needs it. |
+| **Python 3.13** in a repo-local `.venv`. | Current stable Python; supported by PyInstaller; one version for both developers and CI. | Every library we add must support 3.13; check before adding one. |

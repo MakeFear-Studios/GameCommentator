@@ -6,36 +6,22 @@ Temporary home for the wiring until the engine (B5.1) exists.
 import argparse
 import signal
 import sys
-import time
-from datetime import datetime
 
 from commentator.capture.manager import CaptureManager
-from commentator.core import paths
 from commentator.core.config import load_game_configs
 from commentator.core.types import NullFrameSink
 from commentator.detection import system
 from commentator.detection.matcher import Match
 from commentator.detection.watcher import GameWatcher
-from commentator.events import JsonlLogger, bus
+from commentator.logs import DevLogger, LogEvent, bus
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Game Commentator")
-    parser.add_argument("--dev", action="store_true", help="log events and sample frames")
-    parser.add_argument("--game", help="force a game config by id, e.g. pico_park")
-    parser.add_argument("--window", help="force a window by (part of) its title")
-    parser.add_argument("--persona", help="persona config id (not used yet)")
-    return parser.parse_args(argv)
+def _print_event(event: LogEvent) -> None:
+    data = " ".join(f"{k}={v}" for k, v in event.data.items())
+    print(f"[{event.t:8.2f}] {event.stage}.{event.type} {data}", flush=True)
 
 
-def _print_event(record: dict) -> None:
-    data = " ".join(f"{k}={v}" for k, v in record["data"].items())
-    print(f"[{record['t']:8.2f}] {record['stage']}.{record['type']} {data}", flush=True)
-
-
-def run(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-
+def run(args: argparse.Namespace, dev_logger: DevLogger | None) -> int:
     # Before any UI or window positions are read.
     dpi_mode = system.enable_dpi_awareness()
 
@@ -45,13 +31,8 @@ def run(argv: list[str] | None = None) -> int:
 
     from commentator.ui.overlay.status import StatusOverlay
 
-    session_dir = paths.logs_dir() / datetime.now().strftime("%Y%m%d-%H%M%S")
     bus.subscribe(_print_event)
-    logger = None
-    if args.dev:
-        logger = JsonlLogger(session_dir / "events.jsonl")
-        bus.subscribe(logger)
-    bus.publish("app", "session_started", {"dev": args.dev, "dpi": dpi_mode})
+    bus.publish("app", "dpi_awareness_set", {"mode": dpi_mode})
 
     games = load_game_configs()
     app = QApplication(sys.argv)
@@ -69,9 +50,11 @@ def run(argv: list[str] | None = None) -> int:
 
     def on_found(match: Match) -> None:
         nonlocal capture
-        frames_dir = session_dir / "frames" if args.dev else None
-        # The vision stage (A3) replaces NullFrameSink.
-        capture = CaptureManager(match.window.hwnd, sink=NullFrameSink(), frames_dir=frames_dir)
+        capture = CaptureManager(
+            match.window.hwnd,
+            sink=NullFrameSink(),  # The vision stage (A3) replaces this.
+            save_frame=dev_logger.save_frame if dev_logger else None,
+        )
         capture.start()
         state = system.window_state(match.window.hwnd)
         rect = (state.left, state.top, state.width, state.height) if state.exists else None
@@ -94,6 +77,7 @@ def run(argv: list[str] | None = None) -> int:
         )
     except ValueError as error:
         print(error, file=sys.stderr)
+        bus.unsubscribe(_print_event)
         return 2
 
     bridge.waiting.connect(lambda: overlay.show_waiting([g.name for g in watcher.games]))
@@ -106,14 +90,12 @@ def run(argv: list[str] | None = None) -> int:
     heartbeat.timeout.connect(lambda: None)
 
     watcher.start()
-    started = time.monotonic()
     try:
         app.exec()
     finally:
         watcher.stop()
         if capture is not None:
             capture.stop()
-        bus.publish("app", "session_ended", {"seconds": round(time.monotonic() - started, 1)})
-        if logger is not None:
-            logger.close()
+        bus.flush()
+        bus.unsubscribe(_print_event)
     return 0

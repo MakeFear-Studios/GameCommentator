@@ -34,10 +34,7 @@ def enable_dpi_awareness() -> str:
 
 
 def list_processes() -> list[ProcessInfo]:
-    return [
-        ProcessInfo(pid=p.info["pid"], name=p.info["name"] or "")
-        for p in psutil.process_iter(["pid", "name"])
-    ]
+    return [ProcessInfo(pid=p.info["pid"], name=p.info["name"] or "") for p in psutil.process_iter(["pid", "name"])]
 
 
 def list_windows() -> list[WindowInfo]:

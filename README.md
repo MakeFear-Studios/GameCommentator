@@ -151,7 +151,9 @@ Play in **borderless windowed** mode for reliable capture and overlay support.
 python main.py --dev
 ```
 
-Every stage reports what it's doing as a small structured event on an internal **event bus**. In dev mode, a **dev logger** writes all of them to one place, and a **dev dashboard** shows them live.
+For the installed app, run `GameCommentator.exe --dev` or set the environment variable `GAME_COMMENTATOR_DEV=1`.
+
+Every stage reports what it's doing as a small structured event on an internal **log bus** (`commentator/logs/`). In dev mode, a **dev logger** writes all of them to one place, and a **dev dashboard** shows them live.
 
 ```
  capture ─┐
@@ -163,10 +165,12 @@ Every stage reports what it's doing as a small structured event on an internal *
 ```
 
 ```json
-{"t": 12.43, "stage": "director", "type": "event_dropped", "data": {"event": "healed", "reason": "expired"}}
+{"seq": 42, "t": 12.43, "stage": "director", "type": "event_dropped", "level": "info", "data": {"event": "healed", "reason": "expired"}}
 ```
 
-- **One log per session:** `logs/<session>/events.jsonl` (JSON Lines), plus a sampled frame every few seconds so you can see what the model saw.
+- **One folder per session:** `events.jsonl` (JSON Lines, one event per line), `session.json` (start and end time, counts, version) and `frames/` (sampled frames, so you can see what the model saw).
+- **Where:** `logs/` in the repo when running from source; `%LOCALAPPDATA%\GameCommentator\logs\` for the installed .exe; or anywhere with `--log-dir`.
+- **Crashes are recorded** too, including crashes in background threads, which matters for the windowed .exe where there's no console.
 - **Dev dashboard:** a local web page that follows events live, or opens an old session log and replays it.
 - **Replay for testing:** the vision LLM's recorded events replay through the director, narrator and voice offline, so tuning doesn't need the game running.
 - **Zero cost when off:** without `--dev`, nothing is written.
@@ -176,7 +180,7 @@ What the dashboard shows will be decided once real logs exist. Candidates: the f
 
 ## Tech stack
 
-- **Python 3.12**
+- **Python 3.13**
 - **Game detection:** `psutil`, Win32 window APIs
 - **Window capture:** `windows-capture` (Windows Graphics Capture), `mss` fallback
 - **Vision:** vision LLM (Qwen2.5-VL / Gemma 3 / Moondream via Ollama) with structured JSON output
@@ -203,7 +207,8 @@ Game-Commentor/
 │   ├── voice/                    # TTS + stoppable playback
 │   ├── memory/                   # Fight memory, session memory, context builder (all in RAM)
 │   ├── backends/                 # Swappable model adapters (Ollama, OpenAI-compatible, Claude, Gemini, Kokoro, ...)
-│   ├── events/                   # Event bus, event types, dev logger
+│   ├── logs/                     # Log event bus, dev logger, log reader
+│   ├── events/                   # TBD
 │   └── ui/                       # Front ends: command line, tray app, subtitle overlay, dev dashboard
 ├── config/                       # Everything you can swap without touching code
 │   ├── games/                    # How to recognise each game, which events to look for, priorities
@@ -230,7 +235,7 @@ Game-Commentor/
 
 - **`commentator/`**: each pipeline stage is its own folder (a Python package), so every part stays small and easy to find as the code grows.
 - **`commentator/ui/`**: front ends only call the engine's controls, so the command line, tray app, overlay and dev dashboard share all the same logic.
-- **`commentator/events/`**: every stage publishes what it does here; dev mode logs and streams it.
+- **`commentator/logs/`**: every stage publishes what it does to the log bus here; dev mode writes it to disk and streams it.
 - **`config/`**: game, persona and backend files are plain YAML. Adding a game, a new commentary style or a different model means changing a file here, not writing code.
 - **`docs/`**: short, focused docs so humans and AI agents can get context on one area without reading the whole codebase.
 
@@ -248,13 +253,30 @@ The installer isn't code-signed yet, so Windows may show "Windows protected your
 
 ### Run from source (developers)
 
-Requires Python 3.12+.
+Requires **Python 3.13** on Windows.
 
 ```bash
 git clone git@github.com:MakeFear-Studios/Game-Commentor.git
 cd Game-Commentor
-python main.py
 ```
+
+Create a virtual environment with Python 3.13 and install the dependencies (in PowerShell):
+
+```powershell
+py -3.13 -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e . pytest ruff
+```
+
+Then run the app and the tests:
+
+```bash
+python main.py
+python main.py --dev
+python -m pytest tests
+```
+
+Dependencies are listed in `pyproject.toml` (task 0.2 will split them into groups). `.venv/` is git-ignored.
 
 ## Roadmap
 

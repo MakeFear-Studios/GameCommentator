@@ -31,9 +31,7 @@ class MssBackend:
 
     def start(self, hwnd: int) -> None:
         self._stop.clear()
-        self._thread = threading.Thread(
-            target=self._run, args=(hwnd,), name="capture-mss", daemon=True
-        )
+        self._thread = threading.Thread(target=self._run, args=(hwnd,), name="capture-mss", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:

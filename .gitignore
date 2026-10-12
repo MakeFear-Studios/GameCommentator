@@ -29,8 +29,9 @@ CLAUDE.local.md
 .DS_Store
 Thumbs.db
 
-# Local runtime data (session recordings, debug captures)
-logs/
-data/
-recordings/
-captures/
+# Local runtime data (dev-mode session logs, recordings, debug captures).
+# Anchored to the repo root so source packages such as commentator/logs/ are not ignored.
+/logs/
+/data/
+/recordings/
+/captures/

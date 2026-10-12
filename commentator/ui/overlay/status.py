@@ -62,9 +62,7 @@ class StatusOverlay(QWidget):
         )
         self._place_in_corner()
 
-    def show_found(
-        self, game_name: str, game_rect: tuple[int, int, int, int] | None = None
-    ) -> None:
+    def show_found(self, game_name: str, game_rect: tuple[int, int, int, int] | None = None) -> None:
         """`game_rect` is the game's client area (left, top, width, height) in physical pixels."""
         self._show(f"{game_name} detected", "Commentary attached to the game window.")
         if game_rect and game_rect[2] > 0 and game_rect[3] > 0:
@@ -87,9 +85,7 @@ class StatusOverlay(QWidget):
 
     def _place_in_corner(self) -> None:
         screen = QGuiApplication.primaryScreen().availableGeometry()
-        self.move(
-            screen.right() - self.width() - _MARGIN, screen.bottom() - self.height() - _MARGIN
-        )
+        self.move(screen.right() - self.width() - _MARGIN, screen.bottom() - self.height() - _MARGIN)
 
     def _place_over_game(self, game_rect: tuple[int, int, int, int]) -> None:
         # Bottom centre of the game, where subtitles will go later. Positioned with Win32 in

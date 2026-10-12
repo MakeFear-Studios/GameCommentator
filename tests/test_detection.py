@@ -1,11 +1,11 @@
 from pathlib import Path
 
 import pytest
+from fakes import RecordingBus
 
 from commentator.core.config import GameConfig, GameMatch, load_game_configs
 from commentator.detection.matcher import ProcessInfo, WindowInfo, find_game
 from commentator.detection.watcher import GameWatcher
-from commentator.events import EventBus
 
 ELDEN = GameConfig("elden_ring", "ELDEN RING", GameMatch("eldenring.exe", "ELDEN RING"))
 PICO = GameConfig("pico_park", "PICO PARK", GameMatch(process="pico_park.exe"))
@@ -24,9 +24,7 @@ def win(hwnd: int, pid: int, title: str, w: int = 1920, h: int = 1080) -> Window
 
 
 def test_loads_game_configs(tmp_path: Path) -> None:
-    (tmp_path / "pico_park.yaml").write_text(
-        "name: PICO PARK\nmatch:\n  process: pico_park.exe\n", encoding="utf-8"
-    )
+    (tmp_path / "pico_park.yaml").write_text("name: PICO PARK\nmatch:\n  process: pico_park.exe\n", encoding="utf-8")
     (tmp_path / "generic.yaml").write_text("name: Any game\n", encoding="utf-8")
 
     games = load_game_configs(tmp_path)
@@ -118,9 +116,7 @@ class FakeSystem:
 
 
 def make_watcher(fake: FakeSystem, calls: list[str], **kwargs) -> tuple[GameWatcher, list[dict]]:
-    events: list[dict] = []
-    event_bus = EventBus()
-    event_bus.subscribe(events.append)
+    event_bus = RecordingBus()
     watcher = GameWatcher(
         kwargs.pop("games", [PICO]),
         on_waiting=lambda: calls.append("waiting"),
@@ -132,7 +128,7 @@ def make_watcher(fake: FakeSystem, calls: list[str], **kwargs) -> tuple[GameWatc
         event_bus=event_bus,
         **kwargs,
     )
-    return watcher, events
+    return watcher, event_bus.events
 
 
 def test_watcher_waits_then_attaches_then_returns_to_waiting() -> None:

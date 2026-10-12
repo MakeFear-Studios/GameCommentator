@@ -3,14 +3,13 @@
 import threading
 import time
 from collections.abc import Callable, Sequence
-from pathlib import Path
 
 import cv2
 
 from commentator.capture.base import CaptureBackend
 from commentator.core.types import Frame, FrameSink, NullFrameSink
 from commentator.detection import system
-from commentator.events import EventBus, bus
+from commentator.logs import EventBus, bus
 
 BackendFactory = Callable[[], CaptureBackend]
 
@@ -40,7 +39,7 @@ class CaptureManager:
         track_interval: float = 0.25,
         stats_interval: float = 5.0,
         idle_after: float = 2.0,
-        frames_dir: Path | None = None,
+        save_frame: Callable[[bytes], str] | None = None,
         save_interval: float = 5.0,
         window_state: Callable[[int], system.WindowState] = system.window_state,
         event_bus: EventBus = bus,
@@ -53,7 +52,7 @@ class CaptureManager:
         self._track_interval = track_interval
         self._stats_interval = stats_interval
         self._idle_after = idle_after
-        self._frames_dir = frames_dir
+        self._save_frame_png = save_frame  # DevLogger.save_frame in dev mode
         self._save_interval = save_interval
         self._window_state = window_state
         self._bus = event_bus
@@ -90,17 +89,13 @@ class CaptureManager:
             try:
                 backend.start(self.hwnd)
             except Exception as error:
-                self._bus.publish(
-                    "capture", "backend_failed", {"backend": backend.name, "error": repr(error)}
-                )
+                self._bus.publish("capture", "backend_failed", {"backend": backend.name, "error": repr(error)})
                 continue
             if self._wait_for_first_frame(backend):
                 self._bus.publish("capture", "capture_started", {"backend": backend.name})
                 return backend
             backend.stop()
-            self._bus.publish(
-                "capture", "backend_failed", {"backend": backend.name, "error": "no frames"}
-            )
+            self._bus.publish("capture", "backend_failed", {"backend": backend.name, "error": "no frames"})
         return None
 
     def _wait_for_first_frame(self, backend: CaptureBackend) -> bool:
@@ -164,7 +159,7 @@ class CaptureManager:
         self._send(count)
         if now - self._last_stats >= self._stats_interval:
             self._publish_stats(state, now)
-        if self._frames_dir and now - self._last_save >= self._save_interval:
+        if self._save_frame_png and now - self._last_save >= self._save_interval:
             self._save_frame(now)
 
     def _send(self, count: int) -> None:
@@ -195,9 +190,7 @@ class CaptureManager:
                 self._bus.publish("capture", "capture_active", {})
         elif not self.idle and now - self._last_new_frame >= self._idle_after:
             self.idle = True
-            self._bus.publish(
-                "capture", "capture_idle", {"seconds": round(now - self._last_new_frame, 1)}
-            )
+            self._bus.publish("capture", "capture_idle", {"seconds": round(now - self._last_new_frame, 1)})
 
     def _publish_stats(self, state: system.WindowState, now: float) -> None:
         assert self.backend is not None
@@ -224,9 +217,10 @@ class CaptureManager:
         frame = self.latest()
         if frame is None:
             return
-        assert self._frames_dir is not None
-        self._frames_dir.mkdir(parents=True, exist_ok=True)
-        path = self._frames_dir / f"frame_{now:010.1f}.png"
-        cv2.imwrite(str(path), frame.image)
+        assert self._save_frame_png is not None
+        ok, png = cv2.imencode(".png", frame.image)
+        if not ok:
+            return
         self._last_save = now
-        self._bus.publish("capture", "frame_saved", {"path": str(path)})
+        path = self._save_frame_png(png.tobytes())
+        self._bus.publish("capture", "frame_saved", {"frame": path})

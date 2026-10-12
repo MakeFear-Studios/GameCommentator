@@ -1,13 +1,12 @@
 import threading
-from pathlib import Path
 
 import numpy as np
+from fakes import RecordingBus
 
 from commentator.capture.base import LatestFrame
 from commentator.capture.manager import CaptureManager
 from commentator.core.types import Frame
 from commentator.detection.system import WindowState
-from commentator.events import EventBus
 
 
 def frame(value: int = 0) -> Frame:
@@ -83,6 +82,17 @@ class FakeBackend:
 FOCUSED = WindowState(exists=True, foreground=True, left=0, top=0, width=6, height=4)
 
 
+class SavedFrames:
+    """Stands in for DevLogger.save_frame."""
+
+    def __init__(self) -> None:
+        self.pngs: list[bytes] = []
+
+    def __call__(self, png: bytes) -> str:
+        self.pngs.append(png)
+        return f"frames/{len(self.pngs):06d}.png"
+
+
 class Clock:
     def __init__(self) -> None:
         self.now = 100.0
@@ -92,9 +102,8 @@ class Clock:
 
 
 def make_manager(backends, state=FOCUSED, **kwargs):
-    events: list[dict] = []
-    event_bus = EventBus()
-    event_bus.subscribe(events.append)
+    event_bus = RecordingBus()
+    events = event_bus.events
     current = {"state": state}
     manager = CaptureManager(
         1,
@@ -185,11 +194,10 @@ def test_pauses_when_unfocused_or_minimized_and_resumes() -> None:
     ]
 
 
-def test_publishes_stats_and_saves_frames_in_dev_mode(tmp_path: Path) -> None:
+def test_publishes_stats_and_saves_frames_in_dev_mode() -> None:
     clock = Clock()
-    manager, events, _ = make_manager(
-        [lambda: FakeBackend("wgc")], frames_dir=tmp_path, clock=clock
-    )
+    saved = SavedFrames()
+    manager, events, _ = make_manager([lambda: FakeBackend("wgc")], save_frame=saved, clock=clock)
     manager.start()
     try:
         clock.now += 5.0
@@ -200,14 +208,14 @@ def test_publishes_stats_and_saves_frames_in_dev_mode(tmp_path: Path) -> None:
     stats = next(e for e in events if e["type"] == "frame_captured")
     assert stats["data"]["frame_size"] == [6, 4]
     assert stats["data"]["backend"] == "wgc"
-    assert len(list(tmp_path.glob("*.png"))) == 1
+    assert len(saved.pngs) == 1 and saved.pngs[0][1:4] == b"PNG"
+    assert next(e for e in events if e["type"] == "frame_saved")["data"] == {"frame": "frames/000001.png"}
 
 
-def test_no_stats_or_saved_frames_while_paused(tmp_path: Path) -> None:
+def test_no_stats_or_saved_frames_while_paused() -> None:
     clock = Clock()
-    manager, events, current = make_manager(
-        [lambda: FakeBackend("wgc")], frames_dir=tmp_path, clock=clock
-    )
+    saved = SavedFrames()
+    manager, events, current = make_manager([lambda: FakeBackend("wgc")], save_frame=saved, clock=clock)
     manager.start()
     try:
         current["state"] = WindowState(exists=True, minimized=True)
@@ -218,7 +226,7 @@ def test_no_stats_or_saved_frames_while_paused(tmp_path: Path) -> None:
         manager.stop()
 
     assert not [e for e in events if e["type"] in ("frame_captured", "capture_idle")]
-    assert not list(tmp_path.glob("*.png"))
+    assert not saved.pngs
 
 
 def test_resume_restarts_fps_measurement() -> None:

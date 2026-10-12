@@ -48,7 +48,8 @@ Event bus ◄── every stage publishes ──► Dev logger (logs/<session>/e
 | Narrator | Model | `commentator/narrator/` |
 | Voice (TTS + playback) | Model + code | `commentator/voice/` |
 | Memory | Code | `commentator/memory/` |
-| Event bus, dev logger | Code | `commentator/events/` |
+| Log bus, dev logger, log reader | Code | `commentator/logs/` |
+| *(TBD)* | | `commentator/events/` |
 | Engine (wiring, controls) | Code | `commentator/engine/` |
 | Front ends | Code | `commentator/ui/` |
 | Shared types, config, paths | Code | `commentator/core/` |

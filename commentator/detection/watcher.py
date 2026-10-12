@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 from commentator.core.config import GameConfig, GameMatch
 from commentator.detection import system
 from commentator.detection.matcher import Match, ProcessInfo, WindowInfo, find_game
-from commentator.events import EventBus, bus
+from commentator.logs import EventBus, bus
 
 
 class GameWatcher:
@@ -52,9 +52,7 @@ class GameWatcher:
             if match is None:
                 if not self._announced_waiting:
                     self._announced_waiting = True
-                    self._bus.publish(
-                        "detection", "waiting", {"games": [g.name for g in self.games]}
-                    )
+                    self._bus.publish("detection", "waiting", {"games": [g.name for g in self.games]})
                     self.on_waiting()
                 return
             self.current = match
@@ -94,9 +92,7 @@ class GameWatcher:
             self._stop.wait(self.poll_interval)
 
 
-def _select_games(
-    games: Sequence[GameConfig], forced_game: str | None, forced_window: str | None
-) -> list[GameConfig]:
+def _select_games(games: Sequence[GameConfig], forced_game: str | None, forced_window: str | None) -> list[GameConfig]:
     """Apply the --game / --window overrides."""
     selected = [g for g in games if not g.match.is_empty]
     if forced_game:
