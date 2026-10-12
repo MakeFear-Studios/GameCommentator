@@ -27,6 +27,7 @@ htmlcov/
 Thumbs.db
 
 # Local runtime data (session recordings, debug captures)
+logs/
 data/
 recordings/
 captures/

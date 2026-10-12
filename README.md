@@ -103,6 +103,36 @@ Game Commentator is a **Windows companion app** that runs alongside the game. It
 
 Play in **borderless windowed** mode for reliable capture and overlay support.
 
+## Dev mode
+
+```bash
+python main.py --dev
+```
+
+Every stage reports what it's doing as a small structured event on an internal **event bus**. In dev mode, a **dev logger** writes all of them to one place, and a **dev dashboard** shows them live.
+
+```
+ capture ─┐
+ watcher ─┤
+ rules ───┤                       ┌──► logs/<session>/events.jsonl   (everything, one file)
+ director ┼──► Event bus ──► Dev logger
+ narrator ┤                       └──► live stream ──► Dev dashboard (browser)
+ voice ───┤
+ memory ──┘
+```
+
+```json
+{"t": 12.43, "stage": "director", "type": "event_dropped", "data": {"event": "healed", "reason": "expired"}}
+```
+
+- **One log per session:** `logs/<session>/events.jsonl` (JSON Lines), plus a sampled frame every few seconds so you can see what the model saw.
+- **Dev dashboard:** a local web page that follows events live, or opens an old session log and replays it.
+- **Replay for testing:** the same log replays through rules and the director offline, so tuning doesn't need the game running.
+- **Zero cost when off:** without `--dev`, nothing is written.
+- **Decoupled:** stages only publish events and don't know the dashboard exists, so it can change freely.
+
+What the dashboard shows will be decided once real logs exist. Candidates: the live frame with HUD crop boxes drawn, HP graphs, an event timeline coloured by priority, the director's queue with expiry countdowns, narrator prompts and responses, memory contents, and latency per stage.
+
 ## Tech stack
 
 - **Python 3.12**
@@ -113,6 +143,7 @@ Play in **borderless windowed** mode for reliable capture and overlay support.
 - **Speech:** Kokoro / Piper
 - **Config:** YAML
 - **Packaging:** PyInstaller
+- **Dev mode:** JSON Lines event log, local web dashboard (WebSocket)
 
 ## Project structure (planned)
 
@@ -130,7 +161,8 @@ Game-Commentor/
 │   ├── voice/                    # TTS + stoppable playback
 │   ├── memory/                   # Fight memory, session memory, context builder (all in RAM)
 │   ├── backends/                 # Swappable model adapters (Ollama, OpenAI-compatible, Claude, Gemini, Kokoro, ...)
-│   └── ui/                       # Front ends: command line, tray app, subtitle overlay
+│   ├── events/                   # Event bus, event types, dev logger
+│   └── ui/                       # Front ends: command line, tray app, subtitle overlay, dev dashboard
 ├── config/                       # Everything you can swap without touching code
 │   ├── games/                    # How to recognise each game, what to track, what counts as an event
 │   │   ├── generic.yaml          # Works in any game (vision model only)
@@ -146,12 +178,14 @@ Game-Commentor/
 │   ├── DESIGN.md                 # What and why: architecture, key decisions, principles
 │   ├── IMPLEMENTATION.md         # How: module-by-module guide, interfaces, build status
 │   └── architecture.png          # Architecture diagram
+├── logs/                         # Dev-mode session logs (not committed)
 ├── .gitignore
 └── README.md
 ```
 
 - **`commentator/`**: each pipeline stage is its own folder (a Python package), so every part stays small and easy to find as the code grows.
-- **`commentator/ui/`**: front ends only call the engine's controls, so the command line, tray app and overlay share all the same logic.
+- **`commentator/ui/`**: front ends only call the engine's controls, so the command line, tray app, overlay and dev dashboard share all the same logic.
+- **`commentator/events/`**: every stage publishes what it does here; dev mode logs and streams it.
 - **`config/`**: game, persona and backend files are plain YAML. Adding a game, a new commentary style or a different model means changing a file here, not writing code.
 - **`docs/`**: short, focused docs so humans and AI agents can get context on one area without reading the whole codebase.
 
@@ -168,15 +202,16 @@ python main.py
 ## Roadmap
 
 1. Test the vision model and HUD reading on Elden Ring boss-fight screenshots
-2. Game detection + window capture → game state printed in the terminal
+2. Event bus and dev logger, then game detection + window capture → game state in the dev log
 3. Rules → events
 4. Director + narrator → commentary lines (text only)
 5. Text-to-speech with stoppable playback and interrupts
-6. Fight memory, then session memory and context builder
-7. Game configs, personas, swappable backends, session record/replay, tests
-8. Tray app with global hotkeys
-9. Subtitle overlay
-10. Package as a .exe and publish on GitHub Releases
+6. Dev dashboard
+7. Fight memory, then session memory and context builder
+8. Game configs, personas, swappable backends, replay from dev logs, tests
+9. Tray app with global hotkeys
+10. Subtitle overlay
+11. Package as a .exe and publish on GitHub Releases
 
 **Stretch goals:** two casters (play-by-play + colour commentary), OBS browser source, auto-clipped highlights.
 
