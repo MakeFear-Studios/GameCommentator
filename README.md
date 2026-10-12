@@ -21,7 +21,7 @@ The first target is **Elden Ring boss fights**.
   - `critical` events (death, boss felled) **interrupt** whatever is being said
   - every line has an expiry time, so stale reactions are never spoken
 - Writes a short commentary line with an LLM and speaks it with text-to-speech
-- Remembers the current fight (deaths, the move that keeps hitting you, your weapon and the boss's) and your whole journey (progress, records, how your skill is improving), so lines build on each other: *"Attempt 23 on Malenia… boss at 18%, the furthest he's ever got!"*
+- Remembers the current fight (deaths, the move that keeps hitting you, your weapon and the boss's) and the key moments of your play session (progress, closest calls, how you're doing), so lines build on each other: *"Attempt 23 on Malenia… boss at 18%, the furthest he's ever got!"*
 
 ## Outcome
 
@@ -62,7 +62,7 @@ Detect game ──► Window capture ──► OpenCV checks (fast, ~100ms) ─�
 
 ## Memory
 
-Two kinds of memory make the commentary smarter than one-off reactions.
+Two kinds of memory make the commentary smarter than one-off reactions. Both live in memory while the app runs and are passed to the narrator as context; nothing is saved to disk.
 
 **Fight memory (short-term):** live, reset for each boss fight.
 - Who you're fighting, attempt number, deaths this session
@@ -70,14 +70,16 @@ Two kinds of memory make the commentary smarter than one-off reactions.
 - **Weapons:** yours (from the equipment icons) and the boss's (from the scene)
 - Streaks and patterns, flasks, summons, phase, the boss's lowest HP this fight
 
-**Player profile (long-term):** saved locally (SQLite) across sessions.
-- **Progress:** bosses beaten and current region (read from the area-name banner)
-- **Records:** attempts per boss, fastest kills, no-hit kills, your nemesis boss
-- **Skill estimate:** attempts per boss, hits taken per minute, flask use, and how they trend over time
-- **Habits:** the attack types that catch you most, favourite weapons
+**Session memory (longer-term):** a small rolling summary kept for the whole play session.
+- **Progress this session:** bosses beaten and current region (read from the area-name banner)
+- **Key moments:** closest calls, best attempts, the boss giving you the most trouble
+- **Skill read:** attempts per boss, hits taken, whether you're improving or struggling
+- **Habits:** the attack types that keep catching you, weapons used
+
+It's kept small on purpose: a few counters plus a short list of important facts, with older or less important ones dropping off so it always fits in the narrator's context window. When a fight ends, fight memory is boiled down to a few lines and added here.
 
 ```
-events ──► Fight memory (live) ──► summarised at fight end ──► Player profile (SQLite)
+events ──► Fight memory (live) ──► summarised at fight end ──► Session memory (rolling summary)
                 │                                                  │
                 └──────────► Context builder ◄─────────────────────┘
                                    │  short, pre-summarised facts
@@ -85,7 +87,7 @@ events ──► Fight memory (live) ──► summarised at fight end ──►
                               Narrator LLM
 ```
 
-Code calculates the stats and a **context builder** turns them into a few short facts for the narrator, which keeps prompts small enough for local models. Each persona uses the same memory in its own way: the sports caster hypes your records, the dark narrator turns them into lore.
+Code calculates the stats and a **context builder** turns them into a few short facts for the narrator, which keeps prompts small enough for local models. Each persona uses the same memory in its own way: the sports caster hypes the comeback, the dark narrator turns it into lore.
 
 ## How it runs
 
@@ -126,7 +128,7 @@ Game-Commentor/
 │   ├── director/                 # Priority queue, expiry, interrupts
 │   ├── narrator/                 # LLM → commentary line
 │   ├── voice/                    # TTS + stoppable playback
-│   ├── memory/                   # Fight memory (live), player profile (long-term), context builder
+│   ├── memory/                   # Fight memory, session memory, context builder (all in RAM)
 │   ├── backends/                 # Swappable model adapters (Ollama, OpenAI-compatible, Claude, Gemini, Kokoro, ...)
 │   └── ui/                       # Front ends: command line, tray app, subtitle overlay
 ├── config/                       # Everything you can swap without touching code
@@ -170,7 +172,7 @@ python main.py
 3. Rules → events
 4. Director + narrator → commentary lines (text only)
 5. Text-to-speech with stoppable playback and interrupts
-6. Fight memory, then player profile and context builder
+6. Fight memory, then session memory and context builder
 7. Game configs, personas, swappable backends, session record/replay, tests
 8. Tray app with global hotkeys
 9. Subtitle overlay
