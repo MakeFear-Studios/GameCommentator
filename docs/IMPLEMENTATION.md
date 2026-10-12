@@ -25,7 +25,7 @@ The pipeline splits cleanly at the **event stream**. Track A produces `GameEvent
 
 | | **Welsby: Track A, "see and ship"** | **Nathan: Track B, "think and speak"** |
 |---|---|---|
-| Owns | `detection/`, `capture/`, `vision/`, `events/`, `ui/dev/`, `config/games/`, `packaging/`, `.github/` | `director/`, `narrator/`, `voice/`, `memory/`, `engine/`, `ui/` (cli, tray, overlay), `config/personas/` |
+| Owns | `detection/`, `capture/`, `vision/`, `logs/`, `ui/dev/`, `config/games/`, `packaging/`, `.github/` | `director/`, `narrator/`, `voice/`, `memory/`, `engine/`, `ui/` (cli, tray, overlay), `config/personas/` |
 | Backends | Vision + text LLM adapter (OpenAI-compatible / Ollama) | TTS adapters (Kokoro, Piper); API adapters (Claude, Gemini) |
 | Needs Elden Ring? | Yes | No: works from fake and recorded events |
 | ML / AI | Multimodal LLM: prompts from config, structured output, validation | Narrator prompting, personas, memory and context design |
@@ -48,7 +48,7 @@ Goal: agree the contracts and set up the repo so we can split. Split the tasks, 
 | 0.1 | Merge `initial-setup` into `main`, make `main` the default branch, protect it (PRs + 1 review required) | Welsby | ⬜ |
 | 0.2 | `pyproject.toml` with dependency groups (`dev`, `vision`, `voice`, `ui`, `build`), ruff, pytest, pre-commit | Welsby | ⬜ |
 | 0.3 | GitHub Actions CI: lint + tests on every PR (Windows runner) | Welsby | ⬜ |
-| 0.4 | `events/`: event bus (`publish` / `subscribe`) and dev logger writing `logs/<session>/events.jsonl` with `--dev` | Welsby | ⬜ |
+| 0.4 | `logs/`: log bus (`publish` / `subscribe`), dev logger writing `logs/<session>/`, log reader, Python `logging` bridge, tests. *Library done; hooking it to `--dev` in `main.py` waits on 0.5.* | Welsby | 🟨 |
 | 0.5 | Package skeleton: every folder from the README with `__init__.py`; `main.py` parses `--dev`, `--game`, `--persona` | Nathan | ⬜ |
 | 0.6 | `core/types.py`: `Priority`, `GameEvent`, `GameState`, `VisionResult`, `CommentaryLine` (see Contracts) | Nathan | ⬜ |
 | 0.7 | `core/config.py`: load and validate game, persona and backend YAML (pydantic); `core/paths.py` for config, user data and models dirs | Nathan | ⬜ |
@@ -124,18 +124,29 @@ class EventSource(Protocol):
 
 Implementations: `VisionEventSource` (Track A, live), `ReplayEventSource` (reads `events.jsonl`, Track A), `FakeEventSource` (scripted scenarios, Track B).
 
-### Event bus and log format (`commentator/events/`)
+### Log bus and log format (`commentator/logs/`) ✅ implemented
 
 ```python
-bus.publish(stage="vision", type="result", data={...})
-bus.subscribe(callback)            # dev logger, dashboard, tests
+from commentator.logs import bus
+
+bus.publish("director", "event_dropped", {"event": "healed", "reason": "expired"})   # level="info" by default
+bus.publish("vision", "model_timeout", {"model": "qwen2.5vl:3b"}, level="warning")
+bus.subscribe(callback)            # dev logger, dashboard, tests; callback(LogEvent) runs on the bus thread
 ```
 
-One JSON object per line in `logs/<session>/events.jsonl`:
+- **Observation only.** Stages pass real data through their own queues; the pipeline must behave the same with no subscribers.
+- **Never blocks.** `publish` returns immediately; a background thread delivers. With no subscribers it does nothing.
+- **Bounded buffer** (10,000 events): when full, the oldest are dropped and a `logs / events_dropped` warning is emitted with the count.
+- **Conventions:** `stage` = package name; `type` = snake_case past tense; `data` = small, flat, JSON-friendly (images go to `DevLogger.save_frame()` and are referenced by path); `level` ∈ `debug | info | warning | error`.
+- **Python `logging`:** `capture_python_logging(bus)` forwards library warnings and errors as `stage="log"`, `type="log_record"`.
+
+One JSON object per line in `logs/<session>/events.jsonl` (`t` = seconds since start, monotonic; `seq` = strict order):
 
 ```json
-{"t": 12.43, "stage": "director", "type": "event_dropped", "data": {"event": "healed", "reason": "expired"}}
+{"seq": 42, "t": 12.43, "stage": "director", "type": "event_dropped", "level": "info", "data": {"event": "healed", "reason": "expired"}}
 ```
+
+The session folder also has `session.json` (format version, start and end wall-clock time, counts, app info) and `frames/`. The first and last events are `logs / session_started` and `logs / session_ended`. `read_log(path)` reads a log back as `LogEvent`s.
 
 Every stage publishes its key decisions (frame captured, vision result, event pushed / dropped / spoken, narrator prompt and reply, TTS timing).
 

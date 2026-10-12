@@ -151,7 +151,7 @@ Play in **borderless windowed** mode for reliable capture and overlay support.
 python main.py --dev
 ```
 
-Every stage reports what it's doing as a small structured event on an internal **event bus**. In dev mode, a **dev logger** writes all of them to one place, and a **dev dashboard** shows them live.
+Every stage reports what it's doing as a small structured event on an internal **log bus** (`commentator/logs/`). In dev mode, a **dev logger** writes all of them to one place, and a **dev dashboard** shows them live.
 
 ```
  capture ─┐
@@ -203,7 +203,8 @@ Game-Commentor/
 │   ├── voice/                    # TTS + stoppable playback
 │   ├── memory/                   # Fight memory, session memory, context builder (all in RAM)
 │   ├── backends/                 # Swappable model adapters (Ollama, OpenAI-compatible, Claude, Gemini, Kokoro, ...)
-│   ├── events/                   # Event bus, event types, dev logger
+│   ├── logs/                     # Log event bus, dev logger, log reader
+│   ├── events/                   # TBD
 │   └── ui/                       # Front ends: command line, tray app, subtitle overlay, dev dashboard
 ├── config/                       # Everything you can swap without touching code
 │   ├── games/                    # How to recognise each game, which events to look for, priorities
@@ -230,7 +231,7 @@ Game-Commentor/
 
 - **`commentator/`**: each pipeline stage is its own folder (a Python package), so every part stays small and easy to find as the code grows.
 - **`commentator/ui/`**: front ends only call the engine's controls, so the command line, tray app, overlay and dev dashboard share all the same logic.
-- **`commentator/events/`**: every stage publishes what it does here; dev mode logs and streams it.
+- **`commentator/logs/`**: every stage publishes what it does to the log bus here; dev mode writes it to disk and streams it.
 - **`config/`**: game, persona and backend files are plain YAML. Adding a game, a new commentary style or a different model means changing a file here, not writing code.
 - **`docs/`**: short, focused docs so humans and AI agents can get context on one area without reading the whole codebase.
 

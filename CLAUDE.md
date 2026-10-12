@@ -20,7 +20,7 @@ Before starting a task, find its ID in `docs/IMPLEMENTATION.md` and read the **C
 
 ## Pipeline
 
-Detect game → window capture (newest frame) → **vision LLM** (frame + game config + previous state → state + events with priority, structured JSON) → validation (schema, known events, TTL, cooldown de-dup) → **director** (priority stack, expiry, interrupts) → **narrator LLM** (event + memory → one line) → **TTS** → chunked, stoppable playback. Every stage publishes to an event bus; `--dev` logs to `logs/<session>/events.jsonl` and feeds a dev dashboard.
+Detect game → window capture (newest frame) → **vision LLM** (frame + game config + previous state → state + events with priority, structured JSON) → validation (schema, known events, TTL, cooldown de-dup) → **director** (priority stack, expiry, interrupts) → **narrator LLM** (event + memory → one line) → **TTS** → chunked, stoppable playback. Every stage publishes to the log bus (`commentator/logs/`, `from commentator.logs import bus`); `--dev` logs to `logs/<session>/events.jsonl` and feeds a dev dashboard. `commentator/events/` is reserved and TBD; don't put logging there.
 
 ## Key decisions (don't silently undo these)
 
@@ -36,7 +36,7 @@ If a change conflicts with one of these, raise it rather than working around it,
 
 ## Ownership
 
-- **Welsby (Track A, "see and ship"):** `detection/`, `capture/`, `vision/`, `events/`, `ui/dev/`, `config/games/`, `packaging/`, `.github/`, the OpenAI-compatible / Ollama backend.
+- **Welsby (Track A, "see and ship"):** `detection/`, `capture/`, `vision/`, `logs/`, `ui/dev/`, `config/games/`, `packaging/`, `.github/`, the OpenAI-compatible / Ollama backend.
 - **Nathan (Track B, "think and speak"):** `director/`, `narrator/`, `voice/`, `memory/`, `engine/`, `ui/` (cli, tray, overlay), `config/personas/`, TTS and API backends.
 - **Shared:** `commentator/core/` (types, config loading, paths) is the contract between tracks. Changes need a PR labelled `contract` and both approvals.
 
