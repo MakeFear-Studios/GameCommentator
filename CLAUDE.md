@@ -15,8 +15,11 @@ Shared context for Claude sessions working in this repo. Read by every collabora
 | Overview, features, structure | `README.md` |
 | How it works and why (stages, configs, packaging, testing) | `docs/DESIGN.md` |
 | Who owns what, contracts, task IDs, milestones, status, decision log | `docs/IMPLEMENTATION.md` |
+| How a built package works (API, guarantees, formats, tests, next steps) | `commentator/<package>/README.md`, e.g. `commentator/logs/README.md` |
 
-Before starting a task, find its ID in `docs/IMPLEMENTATION.md` and read the **Contracts** section plus that task's track.
+Before starting a task, find its ID in `docs/IMPLEMENTATION.md` and read the **Contracts** section plus that task's track. Before using or changing an existing package, read its `README.md`.
+
+When you finish implementing a package (or change one), write or update its `README.md` so the next person or agent can work from it without reading all the code.
 
 ## Pipeline
 
