@@ -3,8 +3,9 @@ from pathlib import Path
 
 import numpy as np
 
-from commentator.capture.base import Frame, LatestFrame
+from commentator.capture.base import LatestFrame
 from commentator.capture.manager import CaptureManager
+from commentator.core.types import Frame
 from commentator.detection.system import WindowState
 from commentator.events import EventBus
 
@@ -261,3 +262,66 @@ def test_reports_idle_and_active() -> None:
         "capture_idle",
         "capture_active",
     ]
+
+
+# Hand-off to the next stage
+
+
+class RecordingSink:
+    def __init__(self, fail: bool = False) -> None:
+        self.frames: list[Frame] = []
+        self.fail = fail
+
+    def submit(self, frame: Frame) -> None:
+        if self.fail:
+            raise RuntimeError("vision broke")
+        self.frames.append(frame)
+
+
+def test_sends_each_new_frame_once() -> None:
+    backend, sink = FakeBackend("wgc"), RecordingSink()
+    manager, _, _ = make_manager([lambda: backend], sink=sink)
+    manager.start()
+    try:
+        manager.track()
+        manager.track()  # No new frame: nothing sent.
+        backend.push(3)
+        manager.track()
+    finally:
+        manager.stop()
+
+    assert [f.image[0, 0, 0] for f in sink.frames] == [7, 3]
+
+
+def test_sends_nothing_while_paused_or_stale() -> None:
+    backend, sink = FakeBackend("wgc"), RecordingSink()
+    manager, _, current = make_manager([lambda: backend], sink=sink)
+    manager.start()
+    try:
+        current["state"] = WindowState(exists=True, minimized=True)
+        manager.track()
+        backend.push(5)  # Arrives while paused.
+        manager.track()
+        current["state"] = FOCUSED
+        manager.track()  # Resumed, but the newest frame predates the resume.
+        backend.push(6)
+        manager.track()
+    finally:
+        manager.stop()
+
+    assert [f.image[0, 0, 0] for f in sink.frames] == [6]
+
+
+def test_broken_sink_does_not_stop_capture() -> None:
+    backend = FakeBackend("wgc")
+    manager, events, _ = make_manager([lambda: backend], sink=RecordingSink(fail=True))
+    manager.start()
+    try:
+        manager.track()
+        backend.push()
+        manager.track()
+    finally:
+        manager.stop()
+
+    errors = [e for e in events if e["type"] == "sink_error"]
+    assert len(errors) == 2 and "vision broke" in errors[0]["data"]["error"]

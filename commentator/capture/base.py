@@ -1,25 +1,9 @@
-"""Frame type, newest-frame buffer and the backend interface."""
+"""Newest-frame buffer and the backend interface."""
 
 import threading
-import time
-from dataclasses import dataclass, field
 from typing import Protocol
 
-import numpy as np
-
-
-@dataclass(frozen=True)
-class Frame:
-    image: np.ndarray  # height x width x 4, BGRA, uint8
-    t: float = field(default_factory=time.monotonic)
-
-    @property
-    def width(self) -> int:
-        return self.image.shape[1]
-
-    @property
-    def height(self) -> int:
-        return self.image.shape[0]
+from commentator.core.types import Frame
 
 
 class LatestFrame:

@@ -7,7 +7,8 @@ from pathlib import Path
 
 import cv2
 
-from commentator.capture.base import CaptureBackend, Frame
+from commentator.capture.base import CaptureBackend
+from commentator.core.types import Frame, FrameSink, NullFrameSink
 from commentator.detection import system
 from commentator.events import EventBus, bus
 
@@ -24,6 +25,7 @@ def default_backends() -> list[BackendFactory]:
 class CaptureManager:
     """Starts the first backend that delivers a frame, then watches the window.
 
+    Each new frame goes to `sink` (the vision stage) while the game is focused.
     `latest()` returns None while paused (game minimised or not focused) and after a
     resume until a new frame arrives, so later stages never see a stale picture.
     """
@@ -32,6 +34,7 @@ class CaptureManager:
         self,
         hwnd: int,
         *,
+        sink: FrameSink | None = None,
         backends: Sequence[BackendFactory] | None = None,
         first_frame_timeout: float = 2.0,
         track_interval: float = 0.25,
@@ -44,6 +47,7 @@ class CaptureManager:
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.hwnd = hwnd
+        self._sink = sink or NullFrameSink()
         self._factories = list(backends) if backends is not None else default_backends()
         self._first_frame_timeout = first_frame_timeout
         self._track_interval = track_interval
@@ -66,6 +70,8 @@ class CaptureManager:
         self._last_count = 0
         self._last_new_frame = 0.0
         self.idle = False
+        self._last_sent_count = 0
+        self._sent_since_stats = 0
 
     # Backend selection
 
@@ -128,9 +134,8 @@ class CaptureManager:
     # Window tracking
 
     def _run(self) -> None:
-        while not self._stop.is_set():
+        while not self._stop.wait(self._track_interval):
             self.track()
-            self._stop.wait(self._track_interval)
 
     def track(self) -> None:
         """One tracking step. Public so tests can drive it without threads."""
@@ -156,10 +161,26 @@ class CaptureManager:
             return
 
         self._check_idle(count, now)
+        self._send(count)
         if now - self._last_stats >= self._stats_interval:
             self._publish_stats(state, now)
         if self._frames_dir and now - self._last_save >= self._save_interval:
             self._save_frame(now)
+
+    def _send(self, count: int) -> None:
+        """Pass the newest frame to the next stage, once per new frame."""
+        if count <= self._last_sent_count:
+            return
+        frame = self.latest()
+        if frame is None:
+            return
+        self._last_sent_count = count
+        try:
+            self._sink.submit(frame)
+        except Exception as error:  # A broken consumer mustn't stop capture.
+            self._bus.publish("capture", "sink_error", {"error": repr(error)})
+            return
+        self._sent_since_stats += 1
 
     def _check_idle(self, count: int, now: float) -> None:
         """Report when frames stop arriving while the game is focused.
@@ -190,12 +211,14 @@ class CaptureManager:
                 "backend": self.backend.name,
                 "fps": round(fps, 1),
                 "frames": count,
+                "sent": self._sent_since_stats,
                 "frame_size": [frame.width, frame.height] if frame else None,
                 "window": [state.left, state.top, state.width, state.height],
                 "paused": self.paused,
             },
         )
         self._last_stats, self._last_stats_count = now, count
+        self._sent_since_stats = 0
 
     def _save_frame(self, now: float) -> None:
         frame = self.latest()

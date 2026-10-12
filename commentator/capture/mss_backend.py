@@ -10,7 +10,8 @@ from collections.abc import Callable
 import mss
 import numpy as np
 
-from commentator.capture.base import Frame, LatestFrame
+from commentator.capture.base import LatestFrame
+from commentator.core.types import Frame
 from commentator.detection import system
 
 

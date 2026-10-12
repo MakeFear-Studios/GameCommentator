@@ -12,6 +12,7 @@ from datetime import datetime
 from commentator.capture.manager import CaptureManager
 from commentator.core import paths
 from commentator.core.config import load_game_configs
+from commentator.core.types import NullFrameSink
 from commentator.detection import system
 from commentator.detection.matcher import Match
 from commentator.detection.watcher import GameWatcher
@@ -69,7 +70,8 @@ def run(argv: list[str] | None = None) -> int:
     def on_found(match: Match) -> None:
         nonlocal capture
         frames_dir = session_dir / "frames" if args.dev else None
-        capture = CaptureManager(match.window.hwnd, frames_dir=frames_dir)
+        # The vision stage (A3) replaces NullFrameSink.
+        capture = CaptureManager(match.window.hwnd, sink=NullFrameSink(), frames_dir=frames_dir)
         capture.start()
         state = system.window_state(match.window.hwnd)
         rect = (state.left, state.top, state.width, state.height) if state.exists else None

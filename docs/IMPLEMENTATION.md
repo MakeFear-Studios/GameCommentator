@@ -126,6 +126,20 @@ class EventSource(Protocol):
 
 Implementations: `VisionEventSource` (Track A, live), `ReplayEventSource` (reads `events.jsonl`, Track A), `FakeEventSource` (scripted scenarios, Track B).
 
+### Frames: capture → vision (`commentator/core/types.py`)
+
+```python
+@dataclass(frozen=True)
+class Frame:
+    image: np.ndarray      # height x width x 4, BGRA, uint8
+    t: float               # time.monotonic() when captured
+
+class FrameSink(Protocol):
+    def submit(self, frame: Frame) -> None: ...   # must not block
+```
+
+Capture calls `submit` from its tracking thread (up to 4 times a second) with each new frame while the game is focused. Paused frames and frames from before a resume are never sent. The vision stage implements `FrameSink`: keep only the newest frame and analyse it when the model is free. Until then, `NullFrameSink` accepts frames and does nothing. Exceptions from `submit` are logged as `sink_error` and don't stop capture.
+
 ### Event bus and log format (`commentator/events/`)
 
 ```python

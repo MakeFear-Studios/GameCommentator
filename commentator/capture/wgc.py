@@ -3,7 +3,8 @@
 from windows_capture import CaptureControl, InternalCaptureControl, WindowsCapture
 from windows_capture import Frame as WgcFrame
 
-from commentator.capture.base import Frame, LatestFrame
+from commentator.capture.base import LatestFrame
+from commentator.core.types import Frame
 
 
 class WgcBackend:
