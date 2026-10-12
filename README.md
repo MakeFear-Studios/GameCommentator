@@ -99,7 +99,8 @@ Game Commentator is a **Windows companion app** that runs alongside the game. It
   - **Command line**: `python main.py`, for development
   - **Tray app**: runs in the background with global hotkeys (hotkeys only listen; nothing is sent to the game)
   - **Subtitle overlay**: optional on-screen captions over the game
-- **Packaged as a .exe** with PyInstaller. Models run separately in Ollama, so the app stays small and backends stay swappable.
+- **One-click installer.** The app is built with PyInstaller and wrapped in an Inno Setup installer that also installs [Ollama](https://ollama.com) if it's missing and can download the AI models during setup. Models live in Ollama, not inside the app, so it stays small and backends stay swappable.
+- **First-run check.** On every start the app checks that Ollama is running and the models and voice files are present, and offers to download anything missing, or to switch to an API backend instead.
 
 Play in **borderless windowed** mode for reliable capture and overlay support.
 
@@ -142,7 +143,8 @@ What the dashboard shows will be decided once real logs exist. Candidates: the l
 - **Language:** small local LLMs via Ollama, or any OpenAI-compatible API
 - **Speech:** Kokoro / Piper
 - **Config:** YAML
-- **Packaging:** PyInstaller
+- **Packaging:** PyInstaller (one-folder) + Inno Setup installer
+- **Releases:** GitHub Actions builds the installer from a version tag
 - **Dev mode:** JSON Lines event log, local web dashboard (WebSocket)
 
 ## Project structure (planned)
@@ -172,7 +174,8 @@ Game-Commentor/
 │   │   ├── sports_caster.yaml
 │   │   └── dark_narrator.yaml
 │   └── backends.yaml             # Which model runs each stage (local or API)
-├── packaging/                    # PyInstaller build → GameCommentator.exe
+├── packaging/                    # PyInstaller spec + Inno Setup script (installer.iss)
+├── .github/workflows/            # release.yml: version tag → build → installer → GitHub Release
 ├── tests/
 ├── docs/
 │   ├── DESIGN.md                 # What and why: architecture, key decisions, principles
@@ -191,6 +194,18 @@ Game-Commentor/
 
 ## Getting started
 
+### Install (players)
+
+Once releases are available:
+
+1. Download `GameCommentatorSetup.exe` from the [Releases](https://github.com/Welsby/Game-Commentor/releases) page.
+2. Run it. It installs the app and [Ollama](https://ollama.com) (if you don't already have it), and can download the AI models (~3–4 GB) for you.
+3. Launch Game Commentator, start Elden Ring in **borderless windowed** mode, and fight a boss.
+
+The installer isn't code-signed yet, so Windows may show "Windows protected your PC". Click **More info → Run anyway**.
+
+### Run from source (developers)
+
 Requires Python 3.12+.
 
 ```bash
@@ -202,16 +217,17 @@ python main.py
 ## Roadmap
 
 1. Test the vision model and HUD reading on Elden Ring boss-fight screenshots
-2. Event bus and dev logger, then game detection + window capture → game state in the dev log
-3. Rules → events
-4. Director + narrator → commentary lines (text only)
-5. Text-to-speech with stoppable playback and interrupts
-6. Dev dashboard
-7. Fight memory, then session memory and context builder
-8. Game configs, personas, swappable backends, replay from dev logs, tests
-9. Tray app with global hotkeys
-10. Subtitle overlay
-11. Package as a .exe and publish on GitHub Releases
+2. Packaging smoke test: build the .exe and a basic installer early
+3. Event bus and dev logger, then game detection + window capture → game state in the dev log
+4. Rules → events
+5. Director + narrator → commentary lines (text only)
+6. Text-to-speech with stoppable playback and interrupts
+7. Dev dashboard
+8. Fight memory, then session memory and context builder
+9. Game configs, personas, swappable backends, replay from dev logs, tests
+10. Tray app with global hotkeys
+11. Subtitle overlay
+12. Full installer (installs Ollama, optional model download), first-run checks, automated releases
 
 **Stretch goals:** two casters (play-by-play + colour commentary), OBS browser source, auto-clipped highlights.
 
