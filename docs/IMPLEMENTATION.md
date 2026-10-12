@@ -48,7 +48,7 @@ Goal: agree the contracts and set up the repo so we can split. Split the tasks, 
 | 0.1 | Merge `initial-setup` into `main`, make `main` the default branch, protect it (PRs + 1 review required) | Welsby | ⬜ |
 | 0.2 | `pyproject.toml` with dependency groups (`dev`, `vision`, `voice`, `ui`, `build`), ruff, pytest, pre-commit | Welsby | ⬜ |
 | 0.3 | GitHub Actions CI: lint + tests on every PR (Windows runner) | Welsby | ⬜ |
-| 0.4 | `logs/`: log bus (`publish` / `subscribe`), dev logger writing `logs/<session>/`, log reader, Python `logging` bridge, tests. *Library done; hooking it to `--dev` in `main.py` waits on 0.5.* | Welsby | 🟨 |
+| 0.4 | `logs/`: log bus (`publish` / `subscribe`), dev logger writing `logs/<session>/`, log reader, Python `logging` bridge, `--dev` / `GAME_COMMENTATOR_DEV=1` in `main.py` with crash recording and .exe-aware log location, tests. See `commentator/logs/README.md`. *0.5 extends `main.py`'s parser; 0.7 takes over `default_log_root()`.* | Welsby | ✅ |
 | 0.5 | Package skeleton: every folder from the README with `__init__.py`; `main.py` parses `--dev`, `--game`, `--persona` | Nathan | ⬜ |
 | 0.6 | `core/types.py`: `Priority`, `GameEvent`, `GameState`, `VisionResult`, `CommentaryLine` (see Contracts) | Nathan | ⬜ |
 | 0.7 | `core/config.py`: load and validate game, persona and backend YAML (pydantic); `core/paths.py` for config, user data and models dirs | Nathan | ⬜ |

@@ -14,6 +14,7 @@ from .bus import LEVELS, EventBus, LogEvent
 from .dev_logger import FORMAT_VERSION, DevLogger
 from .python_logging import BusLogHandler, capture_python_logging
 from .reader import read_log
+from .session import default_log_root, dev_mode_from_env, dev_session, is_frozen
 
 bus = EventBus()
 """The app-wide bus every stage publishes to."""
@@ -27,5 +28,9 @@ __all__ = [
     "LogEvent",
     "bus",
     "capture_python_logging",
+    "default_log_root",
+    "dev_mode_from_env",
+    "dev_session",
+    "is_frozen",
     "read_log",
 ]

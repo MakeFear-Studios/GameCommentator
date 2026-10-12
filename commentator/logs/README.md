@@ -2,9 +2,45 @@
 
 Task **0.4** in [`docs/IMPLEMENTATION.md`](../../docs/IMPLEMENTATION.md). Owner: Welsby (Track A).
 
-This package is the **one place every stage reports what it's doing**. In dev mode (`--dev`) everything published here is written to `logs/<session>/` and can be streamed to the dev dashboard or replayed later.
+This package is the **one place every stage reports what it's doing**. In dev mode (`--dev` or `GAME_COMMENTATOR_DEV=1`) everything published here is written to a session folder and can be streamed to the dev dashboard or replayed later.
 
 Read this file before publishing from a new stage, adding a subscriber, or changing the log format.
+
+---
+
+## Turning dev mode on
+
+| How | When |
+|---|---|
+| `python main.py --dev` | Running from source |
+| `GameCommentator.exe --dev` | The .exe from a terminal or a shortcut with arguments |
+| Environment variable `GAME_COMMENTATOR_DEV=1` | The windowed .exe, where passing flags is awkward |
+
+**Where the logs go** (`default_log_root()` in `session.py`):
+
+| Running | Log folder |
+|---|---|
+| From source | `<repo>/logs/` (git-ignored), whatever folder you run from |
+| Packaged .exe (`sys.frozen`) | `%LOCALAPPDATA%\GameCommentator\logs\` (Program Files isn't writable) |
+| Override | `--log-dir <path>` or env `GAME_COMMENTATOR_LOG_DIR=<path>` |
+
+On start, dev mode prints `Dev mode: logging to <session folder>`. In a windowed .exe there's no console, so the print is silently discarded; look in the folder above.
+
+`main.py` does nothing but parse the flags and wrap the app in `dev_session(...)`:
+
+```python
+with dev_session(bus, root=args.log_dir, session_info={"version": __version__, "argv": [...]}) as logger:
+    run()
+```
+
+`dev_session` (in `session.py`):
+- starts a `DevLogger` (its `session_started` also records `frozen`, `version`, `argv` and anything else in `session_info`)
+- forwards Python `logging` warnings and errors onto the bus
+- **records crashes** (important for the windowed .exe, where a crash is otherwise invisible):
+  - an exception escaping the block → `app / crashed` (level error, with traceback), then re-raised
+  - Ctrl+C → `app / interrupted`
+  - an exception in **any background thread** → `app / thread_crashed` (with the thread name), then the previous `threading.excepthook` still runs
+- on exit, removes the logging handler, restores `threading.excepthook`, and stops the logger, so nothing leaks into the next session
 
 ---
 
@@ -46,6 +82,7 @@ Publish **decisions and timings**, not every loop iteration.
 | `reader.py` | `read_log()` |
 | `python_logging.py` | `BusLogHandler`, `capture_python_logging()` |
 | `serialize.py` | `to_jsonable()`, `dumps()`: crash-proof JSON encoding |
+| `session.py` | `dev_session()`, `default_log_root()`, `dev_mode_from_env()`, `is_frozen()`: what `--dev` uses |
 
 Tests: [`tests/logs/`](../../tests/logs/). Standard library only at runtime (numpy is only used in tests).
 
@@ -215,10 +252,10 @@ logging.getLogger().removeHandler(handler)                     # detach
 ## Testing
 
 ```bash
-python -m pytest tests/logs -q
+python -m pytest tests/logs tests/test_main.py -q
 ```
 
-What's covered: ordering and `seq`; non-decreasing `t`; 8 threads × 500 events with nothing lost; buffer overflow drops the oldest and emits `events_dropped`; a failing subscriber is reported once and others still receive; `unsubscribe` with a fresh bound method; invalid level; `close()` drains then ignores; session folder contents and `session.json`; events on disk before `stop()`; `stop()` really unsubscribes; unique folders within the same second; awkward data encoding; `save_frame`; `read_log` round-trip, bad lines, strict mode and defaults; the `logging` bridge (levels, threshold, tracebacks).
+What's covered: ordering and `seq`; non-decreasing `t`; 8 threads × 500 events with nothing lost; buffer overflow drops the oldest and emits `events_dropped`; a failing subscriber is reported once and others still receive; `unsubscribe` with a fresh bound method; invalid level; `close()` drains then ignores; session folder contents and `session.json`; events on disk before `stop()`; `stop()` really unsubscribes; unique folders within the same second; awkward data encoding; `save_frame`; `read_log` round-trip, bad lines, strict mode and defaults; the `logging` bridge (levels, threshold, tracebacks); `dev_session` (start and end events, crash logged and re-raised, Ctrl+C, background-thread crash, hooks restored, library warnings); log location from source, as the .exe (`sys.frozen` + `LOCALAPPDATA`) and via the env override; `GAME_COMMENTATOR_DEV` values; `main.py` with and without `--dev` and with the env var.
 
 Patterns for testing your own stage:
 ```python
@@ -236,7 +273,10 @@ def test_my_stage_reports_drops():
 
 ## Status and next steps
 
-- ✅ Bus, dev logger, reader, `logging` bridge, encoding, 24 tests.
-- ⬜ **Hook up `--dev` in `main.py`:** start a `DevLogger` and `capture_python_logging` when `--dev` is passed, stop on exit. Depends on task 0.5 (`main.py` arguments).
+- ✅ Bus, dev logger, reader, `logging` bridge, encoding.
+- ✅ `--dev` / `GAME_COMMENTATOR_DEV=1` in `main.py` via `dev_session`, with crash recording and .exe-aware log location. 41 tests in total.
+- ⬜ Task 0.5 extends `main.py`'s `build_parser()` with `--game`, `--persona`, etc.; keep `--dev` and `--log-dir`.
+- ⬜ Task 0.7 (`core/paths.py`) should take over `default_log_root()`; keep the same locations.
 - ⬜ Live streaming to the dev dashboard (A4.1) will be another subscriber (e.g. pushing to a WebSocket); nothing here needs to change.
+- ⬜ Check with the first PyInstaller build (A5.1) that the .exe writes to `%LOCALAPPDATA%\GameCommentator\logs\`.
 - Possible later: a `--log-level` option to drop `debug` events at publish time; per-stage counters in `session.json`.

@@ -151,6 +151,8 @@ Play in **borderless windowed** mode for reliable capture and overlay support.
 python main.py --dev
 ```
 
+For the installed app, run `GameCommentator.exe --dev` or set the environment variable `GAME_COMMENTATOR_DEV=1`.
+
 Every stage reports what it's doing as a small structured event on an internal **log bus** (`commentator/logs/`). In dev mode, a **dev logger** writes all of them to one place, and a **dev dashboard** shows them live.
 
 ```
@@ -163,10 +165,12 @@ Every stage reports what it's doing as a small structured event on an internal *
 ```
 
 ```json
-{"t": 12.43, "stage": "director", "type": "event_dropped", "data": {"event": "healed", "reason": "expired"}}
+{"seq": 42, "t": 12.43, "stage": "director", "type": "event_dropped", "level": "info", "data": {"event": "healed", "reason": "expired"}}
 ```
 
-- **One log per session:** `logs/<session>/events.jsonl` (JSON Lines), plus a sampled frame every few seconds so you can see what the model saw.
+- **One folder per session:** `events.jsonl` (JSON Lines, one event per line), `session.json` (start and end time, counts, version) and `frames/` (sampled frames, so you can see what the model saw).
+- **Where:** `logs/` in the repo when running from source; `%LOCALAPPDATA%\GameCommentator\logs\` for the installed .exe; or anywhere with `--log-dir`.
+- **Crashes are recorded** too, including crashes in background threads, which matters for the windowed .exe where there's no console.
 - **Dev dashboard:** a local web page that follows events live, or opens an old session log and replays it.
 - **Replay for testing:** the vision LLM's recorded events replay through the director, narrator and voice offline, so tuning doesn't need the game running.
 - **Zero cost when off:** without `--dev`, nothing is written.

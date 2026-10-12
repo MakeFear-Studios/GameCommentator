@@ -62,3 +62,5 @@ Stay inside the owner's folders for the task at hand. Track B builds against `Fa
 - Local models run in **Ollama** (`http://localhost:11434`, OpenAI-compatible at `/v1`). Use structured output (`format` / JSON schema) and `keep_alive` so models stay loaded.
 - The GPU is shared with the game: default to small (3–4B) models.
 - `logs/` and `CLAUDE.local.md` are git-ignored; never commit API keys.
+- **The app ships as a PyInstaller .exe.** Never write next to the code or the .exe: Program Files isn't writable. Use `%LOCALAPPDATA%\GameCommentator\` when `sys.frozen` is set (see `default_log_root()` in `commentator/logs/session.py`). The windowed .exe has no console: `sys.stdout`/`sys.stderr` can be `None`, so don't rely on `print` for anything important; publish to the log bus instead.
+- Dev mode: `python main.py --dev`, or `GAME_COMMENTATOR_DEV=1` for the .exe. Logs go to `<repo>/logs/` from source.
