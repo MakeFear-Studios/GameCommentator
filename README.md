@@ -240,7 +240,7 @@ Game-Commentor/
 
 Once releases are available:
 
-1. Download `GameCommentatorSetup.exe` from the [Releases](https://github.com/Welsby/Game-Commentor/releases) page.
+1. Download `GameCommentatorSetup.exe` from the [Releases](https://github.com/MakeFear-Studios/Game-Commentor/releases) page.
 2. Run it. It installs the app and [Ollama](https://ollama.com) (if you don't already have it), and can download the AI models (~3–4 GB) for you.
 3. Launch Game Commentator, start Elden Ring in **borderless windowed** mode, and fight a boss.
 
@@ -251,7 +251,7 @@ The installer isn't code-signed yet, so Windows may show "Windows protected your
 Requires Python 3.12+.
 
 ```bash
-git clone git@github.com:Welsby/Game-Commentor.git
+git clone git@github.com:MakeFear-Studios/Game-Commentor.git
 cd Game-Commentor
 python main.py
 ```
@@ -273,7 +273,7 @@ The full plan, with tasks, owners and status, is in [docs/IMPLEMENTATION.md](doc
 
 ## Team
 
-Built by **Welsby** and **Nathan**.
+Built by **Welsby** and **Nathan** at [MakeFear Studios](https://github.com/MakeFear-Studios).
 
 - **Welsby**: seeing and shipping. Game detection, window capture, the vision LLM stage, dev mode and dashboard, packaging, installer and releases.
 - **Nathan**: thinking and speaking. Director, narrator and personas, text-to-speech, memory, engine controls, tray app and overlay.

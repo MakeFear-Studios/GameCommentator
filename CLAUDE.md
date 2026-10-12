@@ -4,7 +4,7 @@ Shared context for Claude sessions working in this repo. Read by every collabora
 
 ## Project
 
-**Game Commentator**: a real-time AI commentator for your own gameplay. It watches the game window, works out what's happening, and narrates it out loud. First target: **Elden Ring boss fights**. A Windows companion app (never a mod), local-first with swappable models, built as a portfolio project by **Welsby** and **Nathan**.
+**Game Commentator**: a real-time AI commentator for your own gameplay. It watches the game window, works out what's happening, and narrates it out loud. First target: **Elden Ring boss fights**. A Windows companion app (never a mod), local-first with swappable models, built as a portfolio project by **Welsby** and **Nathan**. The repo is owned by the **MakeFear-Studios** GitHub organization: `git@github.com:MakeFear-Studios/Game-Commentor.git`.
 
 **Status:** planning done, code not started. Only `main.py` exists; the folder layout in the README is the plan.
 
