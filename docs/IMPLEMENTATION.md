@@ -77,7 +77,7 @@ class Priority(StrEnum):
 @dataclass(frozen=True)
 class GameEvent:
     type: str              # must exist in the game config's event catalogue
-    priority: Priority     # from the game config (attached by validation, not the model)
+    priority: Priority     # set by the vision stage (model picks from the game config, validation enforces it); the director only stacks it
     ttl: float             # seconds; from the game config
     detail: str            # short description from the vision LLM
     t: float               # time.monotonic() when the screenshot was captured (Frame.t), not when it arrived
