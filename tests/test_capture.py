@@ -68,6 +68,9 @@ class FakeBackend:
     def stop(self) -> None:
         self.stopped = True
 
+    def push(self, value: int = 7) -> None:
+        self._buffer.put(frame(value))
+
     def latest(self) -> Frame | None:
         return self._buffer.get()
 
@@ -150,7 +153,8 @@ def test_reports_failure_when_no_backend_works() -> None:
 
 
 def test_pauses_when_unfocused_or_minimized_and_resumes() -> None:
-    manager, events, current = make_manager([lambda: FakeBackend("wgc")])
+    backend = FakeBackend("wgc")
+    manager, events, current = make_manager([lambda: backend])
     manager.start()
     try:
         assert manager.latest() is not None
@@ -164,7 +168,12 @@ def test_pauses_when_unfocused_or_minimized_and_resumes() -> None:
 
         current["state"] = FOCUSED
         manager.track()
-        assert not manager.paused and manager.latest() is not None
+        assert not manager.paused
+        assert manager.latest() is None  # The only frame is from before the pause.
+
+        backend.push(9)
+        latest = manager.latest()
+        assert latest is not None and latest.image[0, 0, 0] == 9
     finally:
         manager.stop()
 
@@ -191,3 +200,64 @@ def test_publishes_stats_and_saves_frames_in_dev_mode(tmp_path: Path) -> None:
     assert stats["data"]["frame_size"] == [6, 4]
     assert stats["data"]["backend"] == "wgc"
     assert len(list(tmp_path.glob("*.png"))) == 1
+
+
+def test_no_stats_or_saved_frames_while_paused(tmp_path: Path) -> None:
+    clock = Clock()
+    manager, events, current = make_manager(
+        [lambda: FakeBackend("wgc")], frames_dir=tmp_path, clock=clock
+    )
+    manager.start()
+    try:
+        current["state"] = WindowState(exists=True, minimized=True)
+        for _ in range(3):
+            clock.now += 5.0
+            manager.track()
+    finally:
+        manager.stop()
+
+    assert not [e for e in events if e["type"] in ("frame_captured", "capture_idle")]
+    assert not list(tmp_path.glob("*.png"))
+
+
+def test_resume_restarts_fps_measurement() -> None:
+    clock = Clock()
+    backend = FakeBackend("wgc")
+    manager, events, current = make_manager([lambda: backend], clock=clock)
+    manager.start()
+    try:
+        current["state"] = WindowState(exists=True, minimized=True)
+        manager.track()
+        clock.now += 60.0  # A long pause shouldn't drag the next fps reading down.
+        current["state"] = FOCUSED
+        manager.track()
+        for _ in range(10):
+            backend.push()
+        clock.now += 5.0
+        manager.track()
+    finally:
+        manager.stop()
+
+    stats = next(e for e in events if e["type"] == "frame_captured")
+    assert stats["data"]["fps"] == 2.0
+
+
+def test_reports_idle_and_active() -> None:
+    clock = Clock()
+    backend = FakeBackend("wgc")
+    manager, events, _ = make_manager([lambda: backend], clock=clock, stats_interval=1000)
+    manager.start()
+    try:
+        manager.track()  # First frame seen.
+        clock.now += 2.5
+        manager.track()  # No new frames for 2.5 s.
+        manager.track()  # Reported once.
+        backend.push()
+        manager.track()
+    finally:
+        manager.stop()
+
+    assert [e["type"] for e in events if e["stage"] == "capture"][1:-1] == [
+        "capture_idle",
+        "capture_active",
+    ]

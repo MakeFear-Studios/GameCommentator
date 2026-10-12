@@ -22,10 +22,10 @@ def default_backends() -> list[BackendFactory]:
 
 
 class CaptureManager:
-    """Starts the first backend that delivers a frame, then watches the window every second.
+    """Starts the first backend that delivers a frame, then watches the window.
 
-    `latest()` returns None while paused (game minimised or not focused), so later
-    stages only ever see frames of the game actually being played.
+    `latest()` returns None while paused (game minimised or not focused) and after a
+    resume until a new frame arrives, so later stages never see a stale picture.
     """
 
     def __init__(
@@ -34,8 +34,9 @@ class CaptureManager:
         *,
         backends: Sequence[BackendFactory] | None = None,
         first_frame_timeout: float = 2.0,
-        track_interval: float = 1.0,
+        track_interval: float = 0.25,
         stats_interval: float = 5.0,
+        idle_after: float = 2.0,
         frames_dir: Path | None = None,
         save_interval: float = 5.0,
         window_state: Callable[[int], system.WindowState] = system.window_state,
@@ -47,6 +48,7 @@ class CaptureManager:
         self._first_frame_timeout = first_frame_timeout
         self._track_interval = track_interval
         self._stats_interval = stats_interval
+        self._idle_after = idle_after
         self._frames_dir = frames_dir
         self._save_interval = save_interval
         self._window_state = window_state
@@ -59,6 +61,11 @@ class CaptureManager:
         self._last_stats = 0.0
         self._last_stats_count = 0
         self._last_save = 0.0
+        # Frames up to this count were captured before the last pause; don't hand them out.
+        self._stale_count = 0
+        self._last_count = 0
+        self._last_new_frame = 0.0
+        self.idle = False
 
     # Backend selection
 
@@ -67,7 +74,7 @@ class CaptureManager:
         if self.backend is None:
             self._bus.publish("capture", "capture_failed", {"hwnd": self.hwnd})
             return
-        self._last_stats = self._last_save = self._clock()
+        self._last_stats = self._last_save = self._last_new_frame = self._clock()
         self._thread = threading.Thread(target=self._run, name="capture-track", daemon=True)
         self._thread.start()
 
@@ -114,6 +121,8 @@ class CaptureManager:
     def latest(self) -> Frame | None:
         if self.paused or self.backend is None:
             return None
+        if self.backend.frame_count <= self._stale_count:
+            return None  # Resumed, but no frame since then yet.
         return self.backend.latest()
 
     # Window tracking
@@ -125,23 +134,49 @@ class CaptureManager:
 
     def track(self) -> None:
         """One tracking step. Public so tests can drive it without threads."""
+        assert self.backend is not None
         state = self._window_state(self.hwnd)
         if not state.exists:
             return  # Detection notices and stops us.
+        now = self._clock()
+        count = self.backend.frame_count
         should_pause = state.minimized or not state.foreground
         if should_pause != self.paused:
             self.paused = should_pause
-            reason = "minimized" if state.minimized else "unfocused"
             if should_pause:
+                reason = "minimized" if state.minimized else "unfocused"
                 self._bus.publish("capture", "capture_paused", {"reason": reason})
             else:
+                # Everything captured so far predates the resume.
+                self._stale_count = count
+                self._last_stats, self._last_stats_count = now, count
+                self._last_new_frame = now
                 self._bus.publish("capture", "capture_resumed", {})
+        if self.paused:
+            return
 
-        now = self._clock()
+        self._check_idle(count, now)
         if now - self._last_stats >= self._stats_interval:
             self._publish_stats(state, now)
-        if self._frames_dir and not self.paused and now - self._last_save >= self._save_interval:
+        if self._frames_dir and now - self._last_save >= self._save_interval:
             self._save_frame(now)
+
+    def _check_idle(self, count: int, now: float) -> None:
+        """Report when frames stop arriving while the game is focused.
+
+        Windows Graphics Capture only sends frames when the picture changes, so this can
+        also mean a static screen, not only a stall.
+        """
+        if count != self._last_count:
+            self._last_count, self._last_new_frame = count, now
+            if self.idle:
+                self.idle = False
+                self._bus.publish("capture", "capture_active", {})
+        elif not self.idle and now - self._last_new_frame >= self._idle_after:
+            self.idle = True
+            self._bus.publish(
+                "capture", "capture_idle", {"seconds": round(now - self._last_new_frame, 1)}
+            )
 
     def _publish_stats(self, state: system.WindowState, now: float) -> None:
         assert self.backend is not None
