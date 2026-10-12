@@ -208,7 +208,7 @@ One thread per stage, connected by `queue.Queue`s: capture → vision → direct
 | A2.3 | `capture/`: `windows-capture` backend with `mss` fallback behind one interface; "newest frame" buffer | 🟨 |
 | A2.4 | Publish `frame_captured` (+ sampled frames saved in dev mode) | 🟨 |
 
-**Progress:** working end to end with PICO PARK (`config/games/pico_park.yaml`) as a test game; Elden Ring not checked yet.
+**Progress:** working end to end with PICO PARK (`config/games/pico_park.yaml`) as a test game; Elden Ring not checked yet. How the packages work: [`commentator/detection/README.md`](../commentator/detection/README.md), [`commentator/capture/README.md`](../commentator/capture/README.md).
 
 **Done when:** launching the app before the game shows the waiting overlay; starting Elden Ring attaches automatically; `python main.py --dev` logs frames from any monitor and pauses on alt-tab.
 
