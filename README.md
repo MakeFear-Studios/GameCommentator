@@ -21,7 +21,7 @@ The first target is **Elden Ring boss fights**.
   - `critical` events (death, boss felled) **interrupt** whatever is being said
   - every line has an expiry time, so stale reactions are never spoken
 - Writes a short commentary line with an LLM and speaks it with text-to-speech
-- Remembers your attempts on each boss: *"Attempt 23 on Malenia… boss at 18%, the furthest he's ever got!"*
+- Remembers the current fight (deaths, the move that keeps hitting you, your weapon and the boss's) and your whole journey (progress, records, how your skill is improving), so lines build on each other: *"Attempt 23 on Malenia… boss at 18%, the furthest he's ever got!"*
 
 ## Outcome
 
@@ -59,6 +59,33 @@ Detect game ──► Window capture ──► OpenCV checks (fast, ~100ms) ─�
 | Speaker | Code | Play audio in chunks so it can be cut off for critical events |
 
 **Design principle:** *models for perception and language, code for decisions.*
+
+## Memory
+
+Two kinds of memory make the commentary smarter than one-off reactions.
+
+**Fight memory (short-term):** live, reset for each boss fight.
+- Who you're fighting, attempt number, deaths this session
+- **What hit you:** the vision model describes the attack whenever you take a big hit, so it can call out repeats (*"The delayed slam. AGAIN."*)
+- **Weapons:** yours (from the equipment icons) and the boss's (from the scene)
+- Streaks and patterns, flasks, summons, phase, the boss's lowest HP this fight
+
+**Player profile (long-term):** saved locally (SQLite) across sessions.
+- **Progress:** bosses beaten and current region (read from the area-name banner)
+- **Records:** attempts per boss, fastest kills, no-hit kills, your nemesis boss
+- **Skill estimate:** attempts per boss, hits taken per minute, flask use, and how they trend over time
+- **Habits:** the attack types that catch you most, favourite weapons
+
+```
+events ──► Fight memory (live) ──► summarised at fight end ──► Player profile (SQLite)
+                │                                                  │
+                └──────────► Context builder ◄─────────────────────┘
+                                   │  short, pre-summarised facts
+                                   ▼
+                              Narrator LLM
+```
+
+Code calculates the stats and a **context builder** turns them into a few short facts for the narrator, which keeps prompts small enough for local models. Each persona uses the same memory in its own way: the sports caster hypes your records, the dark narrator turns them into lore.
 
 ## How it runs
 
@@ -99,7 +126,7 @@ Game-Commentor/
 │   ├── director/                 # Priority queue, expiry, interrupts
 │   ├── narrator/                 # LLM → commentary line
 │   ├── voice/                    # TTS + stoppable playback
-│   ├── memory/                   # Attempt history per boss
+│   ├── memory/                   # Fight memory (live), player profile (long-term), context builder
 │   ├── backends/                 # Swappable model adapters (Ollama, OpenAI-compatible, Claude, Gemini, Kokoro, ...)
 │   └── ui/                       # Front ends: command line, tray app, subtitle overlay
 ├── config/                       # Everything you can swap without touching code
@@ -143,10 +170,11 @@ python main.py
 3. Rules → events
 4. Director + narrator → commentary lines (text only)
 5. Text-to-speech with stoppable playback and interrupts
-6. Game configs, personas, swappable backends, session record/replay, tests
-7. Tray app with global hotkeys
-8. Subtitle overlay
-9. Package as a .exe and publish on GitHub Releases
+6. Fight memory, then player profile and context builder
+7. Game configs, personas, swappable backends, session record/replay, tests
+8. Tray app with global hotkeys
+9. Subtitle overlay
+10. Package as a .exe and publish on GitHub Releases
 
 **Stretch goals:** two casters (play-by-play + colour commentary), OBS browser source, auto-clipped highlights.
 
