@@ -27,8 +27,8 @@ The first target is **Elden Ring boss fights**.
 - **Live, spoken commentary** on Elden Ring boss fights that feels responsive, not robotic
 - **Runs fully local and free** on a consumer GPU alongside the game (developed on an RTX 4070 Ti); no API keys required
 - **Modular by design**: three independent parts can be swapped without touching the engine:
-  - **Game config**: what to track and what counts as an event (`games/*.yaml`)
-  - **Persona**: how it talks: style, example lines, voice, chattiness (`personas/*.yaml`)
+  - **Game config**: what to track and what counts as an event (`config/games/*.yaml`)
+  - **Persona**: how it talks: style, example lines, voice, chattiness (`config/personas/*.yaml`)
   - **Model backends**: local (Ollama, Kokoro, Piper) or API (OpenAI-compatible, Claude, Gemini, ElevenLabs)
 - **Read-only**: it only looks at the screen and never sends inputs to the game
 
@@ -70,29 +70,36 @@ Screen capture ──► OpenCV checks (fast, ~100ms) ──┐
 
 ```
 Game-Commentor/
-├── main.py                   # Entry point
-├── commentator/
-│   ├── capture.py            # Screen capture
-│   ├── watcher.py            # OpenCV checks + vision model → game state
-│   ├── rules.py              # Compare states → events (priority + expiry)
-│   ├── director.py           # Priority queue, expiry, interrupts
-│   ├── narrator.py           # LLM → commentary line
-│   ├── voice.py              # TTS + stoppable playback
-│   ├── memory.py             # Attempt history per boss
-│   └── backends/             # Swappable model adapters (Ollama, OpenAI-compatible, Claude, Gemini, Kokoro, ...)
-├── games/
-│   ├── generic.yaml          # Works in any game (vision model only)
-│   ├── elden_ring.yaml       # HUD regions, tracked stats, events
-│   └── refs/                 # Reference images (YOU DIED, ENEMY FELLED)
-├── personas/
-│   ├── sports_caster.yaml
-│   └── dark_narrator.yaml
+├── main.py                       # Entry point
+├── commentator/                  # The engine: one folder per pipeline stage
+│   ├── capture/                  # Screen capture
+│   ├── watcher/                  # OpenCV checks + vision model → game state
+│   ├── rules/                    # Compare states → events (priority + expiry)
+│   ├── director/                 # Priority queue, expiry, interrupts
+│   ├── narrator/                 # LLM → commentary line
+│   ├── voice/                    # TTS + stoppable playback
+│   ├── memory/                   # Attempt history per boss
+│   └── backends/                 # Swappable model adapters (Ollama, OpenAI-compatible, Claude, Gemini, Kokoro, ...)
+├── config/                       # Everything you can swap without touching code
+│   ├── games/                    # What to track and what counts as an event
+│   │   ├── generic.yaml          # Works in any game (vision model only)
+│   │   ├── elden_ring.yaml       # HUD regions, tracked stats, events
+│   │   └── refs/                 # Reference images (YOU DIED, ENEMY FELLED)
+│   └── personas/                 # How the commentator talks
+│       ├── sports_caster.yaml
+│       └── dark_narrator.yaml
 ├── tests/
 ├── docs/
-│   └── architecture.png      # Architecture diagram
+│   ├── DESIGN.md                 # What and why: architecture, key decisions, principles
+│   ├── IMPLEMENTATION.md         # How: module-by-module guide, interfaces, build status
+│   └── architecture.png          # Architecture diagram
 ├── .gitignore
 └── README.md
 ```
+
+- **`commentator/`**: each pipeline stage is its own folder (a Python package), so every part stays small and easy to find as the code grows.
+- **`config/`**: game and persona files are plain YAML. Adding a game or a new commentary style means adding a file here, not writing code.
+- **`docs/`**: short, focused docs so humans and AI agents can get context on one area without reading the whole codebase.
 
 ## Getting started
 
