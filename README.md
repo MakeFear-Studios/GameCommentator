@@ -15,11 +15,11 @@ The first target is **Elden Ring boss fights**.
 - Sends the newest frame to a **vision LLM** along with the game config (the list of events to look for and their priorities) and the previous game state
 - The vision LLM reads the HUD and the scene (your HP, boss HP, "YOU DIED", "boss leaping into the air") and returns structured JSON: the current state plus **events with a priority**, such as `big_hit_landed`, `low_hp`, `you_died`, `boss_felled`
 - Code validates that JSON against the game config and filters out repeats (e.g. "YOU DIED" staying on screen for several frames)
-- Decides **when** to speak and **what** to talk about using a priority queue:
-  - `filler` / `normal` lines are dropped if something is already playing
-  - `high` events are queued to play next
+- Decides **when** to speak and **what** to talk about using a **priority stack**: one newest-first stack per priority level, so it always talks about the most important *and* most recent moment:
+  - `filler` / `normal` events are dropped if something is already playing
+  - `high` events wait on the stack and the newest is spoken next (the older ones are passed to the narrator as context)
   - `critical` events (death, boss felled) **interrupt** whatever is being said
-  - every line has an expiry time, so stale reactions are never spoken
+  - every event has an expiry time, so stale reactions are never spoken, and each stack is capped so a busy fight can't pile up
 - Writes a short commentary line with an LLM and speaks it with text-to-speech
 - Remembers the current fight (deaths, the move that keeps hitting you, your weapon and the boss's) and the key moments of your play session (progress, closest calls, how you're doing), so lines build on each other: *"Attempt 23 on Malenia… boss at 18%, the furthest he's ever got!"*
 
@@ -51,12 +51,27 @@ Detect game ──► Window capture ──► Vision LLM ───────�
 | Window capture | Code | Grab the newest frame from the game window |
 | Vision LLM | Model | Look at the frame with the game config and last state; return the current state and events with priorities as structured JSON |
 | Validation | Code | Check the JSON against the config, drop unknown events and repeats, attach expiry times |
-| Director | Code | Pick which event to narrate and when; handle queueing and interrupts |
+| Director | Code | Pick which event to narrate and when: priority stack (highest priority first, newest first within a level), expiry and interrupts |
 | Narrator | Model | Write one short line in the persona's style |
 | TTS | Model | Turn the line into speech |
 | Speaker | Code | Play audio in chunks so it can be cut off for critical events |
 
-**Design principle:** *models see and judge, code decides when to speak.* The vision LLM decides what happened and how important it is. Code keeps it honest (schema, known event types, de-duplication) and owns timing: queueing, expiry and interrupts.
+**Design principle:** *models see and judge, code decides when to speak.* The vision LLM decides what happened and how important it is. Code keeps it honest (schema, known event types, de-duplication) and owns timing: the priority stack, expiry and interrupts.
+
+### Why a priority stack
+
+A caster should talk about **what just happened**. If several events of the same importance pile up while the commentator is still talking, a queue would pick the oldest (already stale); a stack picks the newest.
+
+```
+critical: [ ]
+high:     [ took_heavy_damage, low_hp, big_hit_landed ← top ]   ← voice is free: take this one
+normal:   [ healed ← top ]
+filler:   [ scene_update ← top ]
+```
+
+- **One stack per priority level.** The director takes the top of the highest non-empty stack, so priority always beats recency.
+- **Newest first within a level.** The older events in that stack go to the narrator as context, so one line can cover them: *"ON LOW HP he lands the big one!"*
+- **Expired events are thrown away** whenever the director looks at a stack, and each stack keeps only its few newest events.
 
 ### What the vision LLM receives and returns
 
@@ -155,7 +170,7 @@ Every stage reports what it's doing as a small structured event on an internal *
 - **Zero cost when off:** without `--dev`, nothing is written.
 - **Decoupled:** stages only publish events and don't know the dashboard exists, so it can change freely.
 
-What the dashboard shows will be decided once real logs exist. Candidates: the frame the vision LLM saw next to the JSON it returned, HP graphs, an event timeline coloured by priority, the director's queue with expiry countdowns, narrator prompts and responses, memory contents, and latency per stage.
+What the dashboard shows will be decided once real logs exist. Candidates: the frame the vision LLM saw next to the JSON it returned, HP graphs, an event timeline coloured by priority, the director's priority stacks with expiry countdowns, narrator prompts and responses, memory contents, and latency per stage.
 
 ## Tech stack
 
@@ -181,7 +196,7 @@ Game-Commentor/
 │   ├── detection/                # Which game is running + find its window
 │   ├── capture/                  # Window capture
 │   ├── vision/                   # Vision LLM: frame + game config + last state → state + events; validation, de-duplication
-│   ├── director/                 # Priority queue, expiry, interrupts
+│   ├── director/                 # Priority stack, expiry, interrupts
 │   ├── narrator/                 # LLM → commentary line
 │   ├── voice/                    # TTS + stoppable playback
 │   ├── memory/                   # Fight memory, session memory, context builder (all in RAM)

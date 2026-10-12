@@ -29,7 +29,7 @@ The pipeline splits cleanly at the **event stream**. Track A produces `GameEvent
 | Backends | Vision + text LLM adapter (OpenAI-compatible / Ollama) | TTS adapters (Kokoro, Piper); API adapters (Claude, Gemini) |
 | Needs Elden Ring? | Yes | No: works from fake and recorded events |
 | ML / AI | Multimodal LLM: prompts from config, structured output, validation | Narrator prompting, personas, memory and context design |
-| Engineering | Windows APIs (process/window detection, GPU capture), event bus, logging | Real-time scheduling (priority queue, expiry, interrupts), streaming audio |
+| Engineering | Windows APIs (process/window detection, GPU capture), event bus, logging | Real-time scheduling (priority stack, expiry, interrupts), streaming audio |
 | UI | Dev dashboard (local web app, live + replay) | Tray app with hotkeys, subtitle overlay |
 | DevOps | PyInstaller, Inno Setup installer, GitHub Actions releases | Test scenarios, fake clock, replay-driven tests |
 
@@ -69,7 +69,7 @@ These are the seams between the tracks. Code against them; change them only thro
 class Priority(StrEnum):
     FILLER = "filler"      # only if nothing else is playing
     NORMAL = "normal"      # dropped if something is playing
-    HIGH = "high"          # queued to play next
+    HIGH = "high"          # waits on its stack; newest is spoken next
     CRITICAL = "critical"  # interrupts current speech
 
 @dataclass(frozen=True)
@@ -137,7 +137,7 @@ One JSON object per line in `logs/<session>/events.jsonl`:
 {"t": 12.43, "stage": "director", "type": "event_dropped", "data": {"event": "healed", "reason": "expired"}}
 ```
 
-Every stage publishes its key decisions (frame captured, vision result, event queued / dropped / spoken, narrator prompt and reply, TTS timing).
+Every stage publishes its key decisions (frame captured, vision result, event pushed / dropped / spoken, narrator prompt and reply, TTS timing).
 
 ### Game config: event catalogue (`config/games/*.yaml`)
 
@@ -157,7 +157,7 @@ The vision prompt and the JSON schema are **generated from this file**, so addin
 
 ### Threading model
 
-One thread per stage, connected by `queue.Queue`s: capture → vision → director → narrator → voice. The director thread owns the event queue and all timing decisions. Model calls are blocking and run in their stage's thread.
+One thread per stage, connected by `queue.Queue`s: capture → vision → director → narrator → voice. These queues are just pipes that hand data from one thread to the next in arrival order. The director thread pulls incoming events onto its own **priority stack** (one newest-first stack per priority level) and owns all timing decisions. Model calls are blocking and run in their stage's thread.
 
 ---
 
@@ -222,9 +222,9 @@ One thread per stage, connected by `queue.Queue`s: capture → vision → direct
 | ID | Task | Status |
 |---|---|---|
 | B1.1 | `FakeEventSource` with scripted scenarios (e.g. "boss fight ending in death", "burst of five events in two seconds") | ⬜ |
-| B1.2 | `director/`: priority queue, TTL expiry (checked before writing *and* before speaking), critical interrupts, cooldowns from the persona | ⬜ |
-| B1.3 | Fake clock so director tests run instantly; tests for expiry, ordering and interrupts | ⬜ |
-| B1.4 | Publish `event_queued` / `event_dropped` / `event_chosen` to the bus | ⬜ |
+| B1.2 | `director/`: **priority stack**: one LIFO stack per priority level; take the top of the highest non-empty stack; pass the rest of that stack to the narrator as context; cap each stack (e.g. 5 newest); drop expired events whenever a stack is read; TTL checked before writing *and* before speaking; critical interrupts; cooldowns from the persona | ⬜ |
+| B1.3 | Fake clock so director tests run instantly; tests for newest-first within a level, priority beating recency, the stack cap, expiry and interrupts | ⬜ |
+| B1.4 | Publish `event_pushed` / `event_dropped` (with reason: expired, capped, superseded) / `event_chosen` to the bus | ⬜ |
 
 **Done when:** scenarios produce the right events in the right order with the right drops, all covered by tests.
 
@@ -306,6 +306,7 @@ A1 and B1 can both start during Phase 0: the spike needs no app code, and the di
 | Decision | Why | Trade-offs and mitigations |
 |---|---|---|
 | **Vision LLM replaces OpenCV checks + rules.** One multimodal model reads the frame with the game config and previous state, and returns state + events with priorities. | One flexible stage; new games and events need YAML only; understands scenes, not just pixels. | Slower (≈1 s vs ≈1 ms) and less consistent. Mitigations: structured output with a schema from the config, validation, per-event cooldowns, previous state in the prompt, model choice from the A1 spike. If deaths feel late, a fast-path check can be added later without changing the contracts. |
+| **Director uses a priority stack, not a queue.** One newest-first stack per priority level. | Commentary should be about what just happened; within the same priority the newest event is the most relevant, and older ones still reach the narrator as context. | Old events sink to the bottom of a stack; mitigated by TTL expiry on every read and a small cap per stack. Priority still always beats recency. |
 | **Memory is in RAM only** (fight + session memory). | Keep it simple; important facts live in the narrator's context. | Nothing carries over between sessions. |
 | **Windows companion app, not a mod.** | Works with anti-cheat, works with any game. | Needs window capture and a screen-reading approach. |
 | **Inno Setup installer that installs Ollama.** | One-click setup for non-technical users; models stay swappable. | Unsigned installer shows a SmartScreen warning. |
