@@ -315,7 +315,7 @@ One thread per stage, connected by `queue.Queue`s: capture → vision → direct
 
 ### B1. Fake events + director
 
-Design: [DESIGN.md § 4.4](DESIGN.md#44-director-when-to-speak-and-what-about). The director takes per-screenshot `VisionResult`s, gathers everything about the past itself, and sends well-timed `NarrationRequest`s.
+Design: [DESIGN.md § 4.4](DESIGN.md#44-director-when-to-speak-and-what-about). How the built package works (wiring, rules, settings, events, simulation): [`commentator/director/README.md`](../commentator/director/README.md). The director takes per-screenshot `VisionResult`s, gathers everything about the past itself, and sends well-timed `NarrationRequest`s.
 
 | ID | Task | Status |
 |---|---|---|
