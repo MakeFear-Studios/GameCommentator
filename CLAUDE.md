@@ -6,7 +6,7 @@ Shared context for Claude sessions working in this repo. Read by every collabora
 
 **Game Commentator**: a real-time AI commentator for your own gameplay. It watches the game window, works out what's happening, and narrates it out loud. First target: **Elden Ring boss fights**. A Windows companion app (never a mod), local-first with swappable models, built as a portfolio project by **Welsby** and **Nathan**. The repo is owned by the **MakeFear-Studios** GitHub organization: `git@github.com:MakeFear-Studios/Game-Commentor.git`.
 
-**Status:** planning done, code not started. Only `main.py` exists; the folder layout in the README is the plan.
+**Status:** startup, game detection, the waiting overlay and window capture (task A2) work, tested with PICO PARK. Everything else is still planned; the folder layout in the README is the plan.
 
 ## Read the right doc
 
@@ -23,7 +23,7 @@ When you finish implementing a package (or change one), write or update its `REA
 
 ## Pipeline
 
-Detect game → window capture (newest frame) → **vision LLM** (frame + game config + previous state → state + events with priority, structured JSON) → validation (schema, known events, TTL, cooldown de-dup) → **director** (priority stack, expiry, interrupts) → **narrator LLM** (event + memory → one line) → **TTS** → chunked, stoppable playback. Every stage publishes to the log bus (`commentator/logs/`, `from commentator.logs import bus`); `--dev` logs to `logs/<session>/events.jsonl` and feeds a dev dashboard. `commentator/events/` is reserved and TBD; don't put logging there.
+Detect game (or show a "waiting for game" overlay until one starts) → window capture (newest frame) → **vision LLM** (frame + game config + previous state → state + events with priority, structured JSON) → validation (schema, known events, TTL, cooldown de-dup) → **director** (priority stack, expiry, interrupts) → **narrator LLM** (event + memory → one line) → **TTS** → chunked, stoppable playback. Every stage publishes to the log bus (`commentator/logs/`, `from commentator.logs import bus`); `--dev` logs to `logs/<session>/events.jsonl` and feeds a dev dashboard. `commentator/events/` is reserved and TBD; don't put logging there.
 
 ## Key decisions (don't silently undo these)
 
@@ -39,15 +39,15 @@ If a change conflicts with one of these, raise it rather than working around it,
 
 ## Ownership
 
-- **Welsby (Track A, "see and ship"):** `detection/`, `capture/`, `vision/`, `logs/`, `ui/dev/`, `config/games/`, `packaging/`, `.github/`, the OpenAI-compatible / Ollama backend.
-- **Nathan (Track B, "think and speak"):** `director/`, `narrator/`, `voice/`, `memory/`, `engine/`, `ui/` (cli, tray, overlay), `config/personas/`, TTS and API backends.
+- **Welsby (Track A, "see and ship"):** `vision/`, `logs/`, `ui/dev/`, `config/games/`, `packaging/`, `.github/`, the OpenAI-compatible / Ollama backend.
+- **Nathan (Track B, "think and speak"):** `detection/`, `capture/` (startup and screenshots, task A2), `director/`, `narrator/`, `voice/`, `memory/`, `engine/`, `ui/` (cli, tray, overlay), `config/personas/`, TTS and API backends.
 - **Shared:** `commentator/core/` (types, config loading, paths) is the contract between tracks. Changes need a PR labelled `contract` and both approvals.
 
 Stay inside the owner's folders for the task at hand. Track B builds against `FakeEventSource` / `ReplayEventSource`, so it never needs the game running.
 
 ## Conventions
 
-- Python 3.13, Windows. Use the repo's virtual environment: `py -3.13 -m venv .venv`, then `.venv\Scripts\Activate.ps1` (or call `.venv\Scripts\python.exe` directly). Run with `python main.py` (`--dev`, `--game`, `--persona`); test with `python -m pytest tests`.
+- Python 3.13, Windows. Use the repo's virtual environment: `py -3.13 -m venv .venv`, then `.venv\Scripts\Activate.ps1` (or call `.venv\Scripts\python.exe` directly), then `pip install -e . pytest ruff`. Run with `python main.py` (`--dev`, `--game`, `--window`, `--persona`); test with `python -m pytest tests`.
 - Type hints; ruff for lint and format; pytest for tests. Director logic is tested with a fake clock.
 - Branches: `welsby/<topic>` or `nathan/<topic>`, one per task ID. `main` is protected; PRs need a review from the other person; squash merge.
 - PR titles start with the task ID, e.g. `B1.2: director priority stack`. Keep PRs small.

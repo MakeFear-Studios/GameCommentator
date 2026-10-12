@@ -25,7 +25,7 @@ The pipeline splits cleanly at the **event stream**. Track A produces `GameEvent
 
 | | **Welsby: Track A, "see and ship"** | **Nathan: Track B, "think and speak"** |
 |---|---|---|
-| Owns | `detection/`, `capture/`, `vision/`, `logs/`, `ui/dev/`, `config/games/`, `packaging/`, `.github/` | `director/`, `narrator/`, `voice/`, `memory/`, `engine/`, `ui/` (cli, tray, overlay), `config/personas/` |
+| Owns | `vision/`, `logs/`, `ui/dev/`, `config/games/`, `packaging/`, `.github/` | `detection/`, `capture/`, `director/`, `narrator/`, `voice/`, `memory/`, `engine/`, `ui/` (cli, tray, overlay), `config/personas/` |
 | Backends | Vision + text LLM adapter (OpenAI-compatible / Ollama) | TTS adapters (Kokoro, Piper); API adapters (Claude, Gemini) |
 | Needs Elden Ring? | Yes | No: works from fake and recorded events |
 | ML / AI | Multimodal LLM: prompts from config, structured output, validation | Narrator prompting, personas, memory and context design |
@@ -34,6 +34,8 @@ The pipeline splits cleanly at the **event stream**. Track A produces `GameEvent
 | DevOps | PyInstaller, Inno Setup installer, GitHub Actions releases | Test scenarios, fake clock, replay-driven tests |
 
 Both tracks get an AI component, a systems component, a UI and a testing or DevOps story, so each of us has a full-stack piece to talk about.
+
+**Exception:** Nathan owns startup, game detection and window capture (A2), even though they sit at the start of Track A in the diagram above. See the decision log.
 
 **Shared:** `core/` (contracts) is owned by both. Changes go through a pull request labelled `contract` and need both approvals.
 
@@ -49,7 +51,7 @@ Goal: agree the contracts and set up the repo so we can split. Split the tasks, 
 | 0.2 | `pyproject.toml` (`requires-python = ">=3.13,<3.14"`) with dependency groups (`dev`, `vision`, `voice`, `ui`, `build`), ruff, pytest, pre-commit | Welsby | ⬜ |
 | 0.3 | GitHub Actions CI: lint + tests on every PR (Windows runner, Python 3.13) | Welsby | ⬜ |
 | 0.4 | `logs/`: log bus (`publish` / `subscribe`), dev logger writing `logs/<session>/`, log reader, Python `logging` bridge, `--dev` / `GAME_COMMENTATOR_DEV=1` in `main.py` with crash recording and .exe-aware log location, tests. See `commentator/logs/README.md`. *0.5 extends `main.py`'s parser; 0.7 takes over `default_log_root()`.* | Welsby | ✅ |
-| 0.5 | Package skeleton: every folder from the README with `__init__.py`; `main.py` parses `--dev`, `--game`, `--persona` | Nathan | ⬜ |
+| 0.5 | Package skeleton: every folder from the README with `__init__.py`; `main.py` parses `--dev`, `--game`, `--persona` | Nathan | 🟨 |
 | 0.6 | `core/types.py`: `Priority`, `GameEvent`, `GameState`, `VisionResult`, `CommentaryLine` (see Contracts) | Nathan | ⬜ |
 | 0.7 | `core/config.py`: load and validate game, persona and backend YAML (pydantic); `core/paths.py` for config, user data and models dirs | Nathan | ⬜ |
 | 0.8 | `backends/base.py`: `VisionModel`, `TextModel`, `SpeechModel` protocols, plus fake implementations for tests | Nathan | ⬜ |
@@ -124,6 +126,20 @@ class EventSource(Protocol):
 
 Implementations: `VisionEventSource` (Track A, live), `ReplayEventSource` (reads `events.jsonl`, Track A), `FakeEventSource` (scripted scenarios, Track B).
 
+### Frames: capture → vision (`commentator/core/types.py`)
+
+```python
+@dataclass(frozen=True)
+class Frame:
+    image: np.ndarray      # height x width x 4, BGRA, uint8
+    t: float               # time.monotonic() when captured
+
+class FrameSink(Protocol):
+    def submit(self, frame: Frame) -> None: ...   # must not block
+```
+
+Capture calls `submit` from its tracking thread (up to 4 times a second) with each new frame while the game is focused. Paused frames and frames from before a resume are never sent. The vision stage implements `FrameSink`: keep only the newest frame and analyse it when the model is free. Until then, `NullFrameSink` accepts frames and does nothing. Exceptions from `submit` are logged as `sink_error` and don't stop capture.
+
 ### Log bus and log format (`commentator/logs/`) ✅ implemented
 
 ```python
@@ -184,15 +200,17 @@ One thread per stage, connected by `queue.Queue`s: capture → vision → direct
 
 **Done when:** a short results table is in `docs/` and the default model is chosen.
 
-### A2. Detection + capture
+### A2. Detection + capture *(owner: Nathan)*
 | ID | Task | Status |
 |---|---|---|
-| A2.1 | `detection/`: match running processes / window titles against each game config's `match` (psutil + Win32); fall back to `generic.yaml` | ⬜ |
-| A2.2 | DPI awareness at startup; window rect tracking; pause when the game isn't focused | ⬜ |
-| A2.3 | `capture/`: `windows-capture` backend with `mss` fallback behind one interface; "newest frame" buffer | ⬜ |
-| A2.4 | Publish `frame_captured` (+ sampled frames saved in dev mode) | ⬜ |
+| A2.1 | `detection/`: on launch, match running processes / window titles against each game config's `match` (psutil + Win32); if none match, show the "Waiting for game to start" overlay and re-check every few seconds; return to waiting when the game closes | 🟨 |
+| A2.2 | DPI awareness at startup; window rect tracking; pause when the game isn't focused | 🟨 |
+| A2.3 | `capture/`: `windows-capture` backend with `mss` fallback behind one interface; "newest frame" buffer | 🟨 |
+| A2.4 | Publish `frame_captured` (+ sampled frames saved in dev mode) | 🟨 |
 
-**Done when:** `python main.py --dev` with Elden Ring on any monitor logs frames, and pauses on alt-tab.
+**Progress:** working end to end with PICO PARK (`config/games/pico_park.yaml`) as a test game; Elden Ring not checked yet.
+
+**Done when:** launching the app before the game shows the waiting overlay; starting Elden Ring attaches automatically; `python main.py --dev` logs frames from any monitor and pauses on alt-tab.
 
 ### A3. Vision stage
 | ID | Task | Status |
@@ -321,5 +339,7 @@ A1 and B1 can both start during Phase 0: the spike needs no app code, and the di
 | **Memory is in RAM only** (fight + session memory). | Keep it simple; important facts live in the narrator's context. | Nothing carries over between sessions. |
 | **Windows companion app, not a mod.** | Works with anti-cheat, works with any game. | Needs window capture and a screen-reading approach. |
 | **Inno Setup installer that installs Ollama.** | One-click setup for non-technical users; models stay swappable. | Unsigned installer shows a SmartScreen warning. |
+| **Nathan owns startup, detection and capture (A2).** | Nathan is building them now. | Track A is now vision, events, dev dashboard and packaging. |
+| **Wait for the game instead of falling back to `generic.yaml`.** On launch with no known game running, show a "Waiting for game to start" overlay and attach when it starts. | Launching the app should just work, whatever order things start in. | The overlay needs a desktop (floating) mode before it docks to the game. `generic.yaml` stays available from the tray. |
 | **Threads + queues between stages.** | Model calls and audio are blocking; simple to reason about. | Revisit asyncio if the dashboard or overlay needs it. |
 | **Python 3.13** in a repo-local `.venv`. | Current stable Python; supported by PyInstaller; one version for both developers and CI. | Every library we add must support 3.13; check before adding one. |

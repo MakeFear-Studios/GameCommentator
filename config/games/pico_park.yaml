@@ -1,0 +1,4 @@
+# PICO PARK: a simple test game for detection and capture.
+name: PICO PARK
+match:
+  process: pico_park.exe

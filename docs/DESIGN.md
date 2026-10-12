@@ -71,7 +71,9 @@ The app captures the **game's window**, not "the screen", so it doesn't matter w
     process: eldenring.exe        # most reliable
     window_title: "ELDEN RING"    # fallback
   ```
-- On startup and every few seconds: list running processes (`psutil`), check each config's `match`, load the matching config. No match: use `generic.yaml` on a window the user picks.
+- Launching `GameCommentator.exe` (or `python main.py`) starts detection straight away: list running processes (`psutil`), check each config's `match`, load the matching config.
+- No match: show a small always-on-top **"Waiting for game to start"** overlay and keep checking every few seconds. No models load while waiting. When a game is found, load its config, attach capture to its window and move the overlay onto the game. When the game closes, go back to waiting.
+- `generic.yaml` on a window the user picks is a manual option from the tray, not the automatic fallback.
 - Manual override from the tray menu or `--game` / `--window`.
 - Track the window's position and size about every second; pause commentary when the game isn't focused.
 - Make the process **DPI-aware** at startup, or window positions are wrong under Windows display scaling.
