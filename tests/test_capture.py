@@ -1,0 +1,193 @@
+import threading
+from pathlib import Path
+
+import numpy as np
+
+from commentator.capture.base import Frame, LatestFrame
+from commentator.capture.manager import CaptureManager
+from commentator.detection.system import WindowState
+from commentator.events import EventBus
+
+
+def frame(value: int = 0) -> Frame:
+    return Frame(np.full((4, 6, 4), value, dtype=np.uint8))
+
+
+# Newest-frame buffer
+
+
+def test_buffer_is_empty_before_first_frame() -> None:
+    assert LatestFrame().get() is None
+
+
+def test_buffer_keeps_only_newest_frame() -> None:
+    buffer = LatestFrame()
+    buffer.put(frame(1))
+    buffer.put(frame(2))
+
+    latest = buffer.get()
+
+    assert latest is not None and latest.image[0, 0, 0] == 2
+    assert buffer.count == 2
+
+
+def test_buffer_is_thread_safe() -> None:
+    buffer = LatestFrame()
+
+    def write() -> None:
+        for _ in range(500):
+            buffer.put(frame())
+
+    threads = [threading.Thread(target=write) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert buffer.count == 2000
+
+
+# Manager
+
+
+class FakeBackend:
+    def __init__(self, name: str, works: bool = True, raises: bool = False) -> None:
+        self.name = name
+        self.works = works
+        self.raises = raises
+        self.started = self.stopped = False
+        self._buffer = LatestFrame()
+
+    def start(self, hwnd: int) -> None:
+        if self.raises:
+            raise RuntimeError("boom")
+        self.started = True
+        if self.works:
+            self._buffer.put(frame(7))
+
+    def stop(self) -> None:
+        self.stopped = True
+
+    def latest(self) -> Frame | None:
+        return self._buffer.get()
+
+    @property
+    def frame_count(self) -> int:
+        return self._buffer.count
+
+
+FOCUSED = WindowState(exists=True, foreground=True, left=0, top=0, width=6, height=4)
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = 100.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def make_manager(backends, state=FOCUSED, **kwargs):
+    events: list[dict] = []
+    event_bus = EventBus()
+    event_bus.subscribe(events.append)
+    current = {"state": state}
+    manager = CaptureManager(
+        1,
+        backends=backends,
+        first_frame_timeout=0.1,
+        track_interval=60,  # The test drives track() itself.
+        window_state=lambda hwnd: current["state"],
+        event_bus=event_bus,
+        **kwargs,
+    )
+    return manager, events, current
+
+
+def test_uses_first_backend_that_delivers_frames() -> None:
+    wgc = FakeBackend("wgc")
+    manager, events, _ = make_manager([lambda: wgc, lambda: FakeBackend("mss")])
+
+    manager.start()
+    try:
+        assert manager.backend is wgc
+        assert events[0]["type"] == "capture_started"
+        assert events[0]["data"] == {"backend": "wgc"}
+    finally:
+        manager.stop()
+    assert wgc.stopped
+
+
+def test_falls_back_when_backend_sends_no_frames() -> None:
+    silent, fallback = FakeBackend("wgc", works=False), FakeBackend("mss")
+    manager, events, _ = make_manager([lambda: silent, lambda: fallback])
+
+    manager.start()
+    manager.stop()
+
+    assert silent.stopped
+    assert [e["type"] for e in events[:2]] == ["backend_failed", "capture_started"]
+    assert events[1]["data"]["backend"] == "mss"
+
+
+def test_falls_back_when_backend_raises() -> None:
+    fallback = FakeBackend("mss")
+    manager, events, _ = make_manager([lambda: FakeBackend("wgc", raises=True), lambda: fallback])
+
+    manager.start()
+    manager.stop()
+
+    assert events[0]["type"] == "backend_failed" and "boom" in events[0]["data"]["error"]
+
+
+def test_reports_failure_when_no_backend_works() -> None:
+    manager, events, _ = make_manager([lambda: FakeBackend("wgc", works=False)])
+
+    manager.start()
+
+    assert manager.backend is None
+    assert events[-1]["type"] == "capture_failed"
+
+
+def test_pauses_when_unfocused_or_minimized_and_resumes() -> None:
+    manager, events, current = make_manager([lambda: FakeBackend("wgc")])
+    manager.start()
+    try:
+        assert manager.latest() is not None
+
+        current["state"] = WindowState(exists=True, foreground=False, width=6, height=4)
+        manager.track()
+        assert manager.paused and manager.latest() is None
+
+        current["state"] = WindowState(exists=True, minimized=True)
+        manager.track()  # Already paused: no second event.
+
+        current["state"] = FOCUSED
+        manager.track()
+        assert not manager.paused and manager.latest() is not None
+    finally:
+        manager.stop()
+
+    pause_events = [e for e in events if e["type"] in ("capture_paused", "capture_resumed")]
+    assert [(e["type"], e["data"]) for e in pause_events] == [
+        ("capture_paused", {"reason": "unfocused"}),
+        ("capture_resumed", {}),
+    ]
+
+
+def test_publishes_stats_and_saves_frames_in_dev_mode(tmp_path: Path) -> None:
+    clock = Clock()
+    manager, events, _ = make_manager(
+        [lambda: FakeBackend("wgc")], frames_dir=tmp_path, clock=clock
+    )
+    manager.start()
+    try:
+        clock.now += 5.0
+        manager.track()
+    finally:
+        manager.stop()
+
+    stats = next(e for e in events if e["type"] == "frame_captured")
+    assert stats["data"]["frame_size"] == [6, 4]
+    assert stats["data"]["backend"] == "wgc"
+    assert len(list(tmp_path.glob("*.png"))) == 1

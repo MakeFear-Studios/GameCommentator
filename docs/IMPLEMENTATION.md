@@ -51,7 +51,7 @@ Goal: agree the contracts and set up the repo so we can split. Split the tasks, 
 | 0.2 | `pyproject.toml` with dependency groups (`dev`, `vision`, `voice`, `ui`, `build`), ruff, pytest, pre-commit | Welsby | ⬜ |
 | 0.3 | GitHub Actions CI: lint + tests on every PR (Windows runner) | Welsby | ⬜ |
 | 0.4 | `events/`: event bus (`publish` / `subscribe`) and dev logger writing `logs/<session>/events.jsonl` with `--dev` | Welsby | ⬜ |
-| 0.5 | Package skeleton: every folder from the README with `__init__.py`; `main.py` parses `--dev`, `--game`, `--persona` | Nathan | ⬜ |
+| 0.5 | Package skeleton: every folder from the README with `__init__.py`; `main.py` parses `--dev`, `--game`, `--persona` | Nathan | 🟨 |
 | 0.6 | `core/types.py`: `Priority`, `GameEvent`, `GameState`, `VisionResult`, `CommentaryLine` (see Contracts) | Nathan | ⬜ |
 | 0.7 | `core/config.py`: load and validate game, persona and backend YAML (pydantic); `core/paths.py` for config, user data and models dirs | Nathan | ⬜ |
 | 0.8 | `backends/base.py`: `VisionModel`, `TextModel`, `SpeechModel` protocols, plus fake implementations for tests | Nathan | ⬜ |
@@ -179,9 +179,11 @@ One thread per stage, connected by `queue.Queue`s: capture → vision → direct
 | ID | Task | Status |
 |---|---|---|
 | A2.1 | `detection/`: on launch, match running processes / window titles against each game config's `match` (psutil + Win32); if none match, show the "Waiting for game to start" overlay and re-check every few seconds; return to waiting when the game closes | 🟨 |
-| A2.2 | DPI awareness at startup; window rect tracking; pause when the game isn't focused | ⬜ |
+| A2.2 | DPI awareness at startup; window rect tracking; pause when the game isn't focused | 🟨 |
 | A2.3 | `capture/`: `windows-capture` backend with `mss` fallback behind one interface; "newest frame" buffer | 🟨 |
-| A2.4 | Publish `frame_captured` (+ sampled frames saved in dev mode) | ⬜ |
+| A2.4 | Publish `frame_captured` (+ sampled frames saved in dev mode) | 🟨 |
+
+**Progress:** working end to end with PICO PARK (`config/games/pico_park.yaml`) as a test game; Elden Ring not checked yet.
 
 **Done when:** launching the app before the game shows the waiting overlay; starting Elden Ring attaches automatically; `python main.py --dev` logs frames from any monitor and pauses on alt-tab.
 

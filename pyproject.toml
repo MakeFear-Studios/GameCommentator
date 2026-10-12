@@ -1,0 +1,40 @@
+[project]
+name = "game-commentator"
+version = "0.0.1"
+description = "A real-time AI commentator for your own gameplay"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy",
+    "opencv-python",
+    "pyyaml",
+    # Detection
+    "psutil",
+    "pywin32",
+    # Capture
+    "windows-capture",
+    "mss",
+    # UI
+    "PySide6",
+]
+
+[dependency-groups]
+dev = ["pytest", "ruff"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["commentator*"]

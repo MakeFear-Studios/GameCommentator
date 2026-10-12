@@ -6,7 +6,9 @@ Shared context for Claude sessions working in this repo. Read by every collabora
 
 **Game Commentator**: a real-time AI commentator for your own gameplay. It watches the game window, works out what's happening, and narrates it out loud. First target: **Elden Ring boss fights**. A Windows companion app (never a mod), local-first with swappable models, built as a portfolio project by **Welsby** and **Nathan**. The repo is owned by the **MakeFear-Studios** GitHub organization: `git@github.com:MakeFear-Studios/Game-Commentor.git`.
 
-**Status:** planning done, code not started. Only `main.py` exists; the folder layout in the README is the plan.
+**Status:** startup, game detection, the waiting overlay and window capture (task A2) work, tested with PICO PARK. Everything else is still planned; the folder layout in the README is the plan.
+
+Setup: `py -3.12 -m venv .venv` (or 3.13), then `.venv\Scripts\pip install -e . pytest ruff`. Test: `.venv\Scripts\python -m pytest`.
 
 ## Read the right doc
 

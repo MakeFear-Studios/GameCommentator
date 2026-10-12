@@ -1,9 +1,8 @@
 """Game Commentator - entry point."""
 
+import sys
 
-def main() -> None:
-    print("Game Commentator: ready.")
-
+from commentator.app import run
 
 if __name__ == "__main__":
-    main()
+    sys.exit(run())
