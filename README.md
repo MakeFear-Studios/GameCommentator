@@ -13,13 +13,14 @@ The first target is **Elden Ring boss fights**.
 - Detects which game you're playing and finds its window automatically, on any monitor; if no known game is running, it shows a "Waiting for game to start" overlay and attaches as soon as one launches
 - Captures that window while you play
 - Sends the newest frame to a **vision LLM** along with the game config (the list of events to look for and their priorities) and the previous game state
-- The vision LLM reads the HUD and the scene (your HP, boss HP, "YOU DIED", "boss leaping into the air") and returns structured JSON: the current state plus **events with a priority**, such as `big_hit_landed`, `low_hp`, `you_died`, `boss_felled`
+- The vision LLM reads the HUD and the scene (your HP, boss HP, "YOU DIED", "boss leaping into the air") and returns structured JSON describing **that one screenshot**: the current state plus **events with a priority**, such as `big_hit_landed`, `low_hp`, `you_died`, `boss_felled`
 - Code validates that JSON against the game config and filters out repeats (e.g. "YOU DIED" staying on screen for several frames)
 - Decides **when** to speak and **what** to talk about using a **priority stack**: one newest-first stack per priority level, so it always talks about the most important *and* most recent moment:
-  - `filler` / `normal` events are dropped if something is already playing
-  - `high` events wait on the stack and the newest is spoken next (the older ones are passed to the narrator as context)
-  - `critical` events (death, boss felled) **interrupt** whatever is being said
-  - every event has an expiry time, so stale reactions are never spoken, and each stack is capped so a busy fight can't pile up
+  - `filler` lines only fill quiet spells; `normal` events wait briefly for the voice to be free
+  - `high` events wait on the stack and the newest is spoken next (the older ones are passed to the narrator as context); a long, less important line can be cut off at the end of its sentence
+  - `critical` events (death, boss felled) **interrupt** whatever is being said, immediately
+  - every event has an expiry time counted from when the screenshot was taken, so stale reactions are never spoken, and each stack is capped so a busy fight can't pile up
+- **Sounds fluent, not choppy:** the next line is prepared while the current one is still playing, so there are no long gaps; interrupts are limited so it doesn't keep cutting itself off; and every line is re-checked against the latest game state just before it's spoken
 - Writes a short commentary line with an LLM and speaks it with text-to-speech
 - Remembers the current fight (deaths, the move that keeps hitting you, your weapon and the boss's) and the key moments of your play session (progress, closest calls, how you're doing), so lines build on each other: *"Attempt 23 on Malenia… boss at 18%, the furthest he's ever got!"*
 
@@ -53,12 +54,12 @@ Detect game ──► Window capture ──► Vision LLM ───────�
 | Window capture | Code | Grab the newest frame from the game window |
 | Vision LLM | Model | Look at the frame with the game config and last state; return the current state and events with priorities as structured JSON |
 | Validation | Code | Check the JSON against the config, drop unknown events and repeats, attach expiry times |
-| Director | Code | Pick which event to narrate and when: priority stack (highest priority first, newest first within a level), expiry and interrupts |
+| Director | Code | Pick which event to narrate and when: priority stack (highest priority first, newest first within a level), expiry, interrupts and timing; gathers the context (earlier events, what changed, memory, recent lines) for the narrator |
 | Narrator | Model | Write one short line in the persona's style |
 | TTS | Model | Turn the line into speech |
 | Speaker | Code | Play audio in chunks so it can be cut off for critical events |
 
-**Design principle:** *models see and judge, code decides when to speak.* The vision LLM decides what happened and how important it is. Code keeps it honest (schema, known event types, de-duplication) and owns timing: the priority stack, expiry and interrupts.
+**Design principle:** *models see and judge, code decides when to speak.* The vision LLM decides what happened and how important it is. Code keeps it honest (schema, known event types, de-duplication) and owns timing: the priority stack, expiry, interrupts and when the next line is prepared.
 
 ### Why a priority stack
 

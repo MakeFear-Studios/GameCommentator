@@ -6,7 +6,7 @@ Shared context for Claude sessions working in this repo. Read by every collabora
 
 **Game Commentator**: a real-time AI commentator for your own gameplay. It watches the game window, works out what's happening, and narrates it out loud. First target: **Elden Ring boss fights**. A Windows companion app (never a mod), local-first with swappable models, built as a portfolio project by **Welsby** and **Nathan**. The repo is owned by the **MakeFear-Studios** GitHub organization: `git@github.com:MakeFear-Studios/Game-Commentor.git`.
 
-**Status:** startup, game detection, the waiting overlay and window capture (task A2) work, tested with PICO PARK. Everything else is still planned; the folder layout in the README is the plan.
+**Status:** startup, game detection, the waiting overlay and window capture (task A2) work, tested with PICO PARK. The director (task B1) is built and tested in simulation (`commentator/director/sim.py`), not yet wired to a real narrator or voice. Everything else is still planned; the folder layout in the README is the plan.
 
 ## Read the right doc
 
@@ -23,12 +23,13 @@ When you finish implementing a package (or change one), write or update its `REA
 
 ## Pipeline
 
-Detect game (or show a "waiting for game" overlay until one starts) → window capture (newest frame) → **vision LLM** (frame + game config + previous state → state + events with priority, structured JSON) → validation (schema, known events, TTL, cooldown de-dup) → **director** (priority stack, expiry, interrupts) → **narrator LLM** (event + memory → one line) → **TTS** → chunked, stoppable playback. Every stage publishes to the log bus (`commentator/logs/`, `from commentator.logs import bus`); `--dev` logs to `logs/<session>/events.jsonl` and feeds a dev dashboard. `commentator/events/` is reserved and TBD; don't put logging there.
+Detect game (or show a "waiting for game" overlay until one starts) → window capture (newest frame) → **vision LLM** (frame + game config + previous state → state + events with priority, structured JSON) → validation (schema, known events, TTL, cooldown de-dup) → **director** (priority stack, expiry, interrupts, timing; gathers history and memory into a `NarrationRequest`) → **narrator LLM** (request → one line) → **TTS** → chunked, stoppable playback. Every stage publishes to the log bus (`commentator/logs/`, `from commentator.logs import bus`); `--dev` logs to `logs/<session>/events.jsonl` and feeds a dev dashboard. `commentator/events/` is reserved and TBD; don't put logging there.
 
 ## Key decisions (don't silently undo these)
 
 - **Models see and judge; code decides when to speak.** The vision LLM picks events and priorities from the game config's catalogue; code validates them and owns all timing.
-- **Director uses a priority stack:** one newest-first (LIFO) stack per priority level (`critical` > `high` > `normal` > `filler`); take the top of the highest non-empty stack; the rest of that stack goes to the narrator as context; stacks are capped; expired events are dropped on read; critical events interrupt.
+- **Director uses a priority stack:** one newest-first (LIFO) stack per priority level (`critical` > `high` > `normal` > `filler`); take the top of the highest non-empty stack; the rest of that stack goes to the narrator as context; stacks are capped; expired events are dropped on read (expiry counts from capture time); critical events interrupt.
+- **Vision describes one screenshot; the director gathers the rest.** `VisionResult` has no history. The director keeps the stacks, state history and spoken lines, reads memory, and owns all timing: it prepares the next line while the current one plays, uses hard / soft / no interrupts with limits, and re-checks each line against the latest state before speaking. The narrator only writes lines.
 - **Memory is in RAM only:** fight memory + a capped session summary. No database.
 - **Modular:** game (`config/games/`), persona (`config/personas/`) and backends (`config/backends.yaml`) are independent YAML. New games, styles or models should need config, not code.
 - **Engine separate from front ends:** CLI, tray, overlay and dev dashboard only call engine controls.

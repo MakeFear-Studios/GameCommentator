@@ -97,7 +97,7 @@ One multimodal model looks at the frame and decides what happened.
 - The game config's **state fields** and **event catalogue** (each event's description, priority and expiry).
 - The **previous state**, so it can judge changes ("boss HP dropped from 27% to 18%").
 
-**Output:** structured JSON, forced into a schema generated from the game config (Ollama's `format` / OpenAI-style structured output):
+**Output:** a description of **this screenshot only**: structured JSON, forced into a schema generated from the game config (Ollama's `format` / OpenAI-style structured output):
 
 ```json
 {
@@ -119,42 +119,111 @@ One multimodal model looks at the frame and decides what happened.
 
 ### 4.4 Director (when to speak, and what about)
 
-The director holds incoming events on a **priority stack**: one newest-first (LIFO) stack per priority level.
+The director turns a stream of per-screenshot vision results into well-timed narration requests. **The vision LLM only describes the one screenshot it was given** (that frame's `state`, `events` and `scene`, shaped by the game config). Everything about the past is stored and gathered by the director: earlier events (its stacks), the state history and what changed, the lines already spoken, and memory facts (read from the memory module, §4.7).
+
+```
+VisionResult ─► intake ─► priority stacks ─┐
+                  └─► state history         │
+SpeechStatus ─► speech tracker ────────────┼─► scheduler (50 ms tick) ─► NarrationRequest ─► narrator
+CommentaryLine ◄─ narrator ─────────────────┘        │
+                                                     └─► re-check ─► voice (play / interrupt)
+```
+
+The narrator only writes lines; it never decides timing. Voice reports back when lines start, are about to end, finish or are cut off, so the director always knows how long the current line has left.
+
+#### Priority stack
+
+Incoming events go on a **priority stack**: one newest-first (LIFO) stack per priority level.
 
 | Priority | Examples | Behaviour |
 |---|---|---|
-| `critical` | Boss appeared, you died, boss felled | **Interrupts** current speech; narrated immediately |
-| `high` | Big hit, heavy damage, low HP, phase two | Waits on its stack; the newest is spoken when the voice is free |
-| `normal` | Healed, notable moment | Dropped if something is already playing |
-| `filler` | Scene update | Only if nothing else is playing |
+| `critical` | Boss appeared, you died, boss felled | **Hard interrupt**: cut current speech at the next audio chunk; narrated immediately |
+| `high` | Big hit, heavy damage, low HP, phase two | Waits on its stack; may **soft interrupt** a long, lower-priority line at a sentence boundary |
+| `normal` | Healed, notable moment | Waits for the voice to be free; expires quickly |
+| `filler` | Scene update | Only after a quiet spell (see dead air) |
 
 **Why a stack:** commentary should be about what just happened. If several same-priority events pile up while the caster is talking, a queue would pick the oldest (stale); a stack picks the newest. Priority still always beats recency.
 
 ```
 critical: [ ]
-high:     [ took_heavy_damage, low_hp, big_hit_landed ← top ]   ← voice is free: take this one
+high:     [ took_heavy_damage, low_hp, big_hit_landed ← top ]   ← next line: take this one
 normal:   [ healed ← top ]
 filler:   [ scene_update ← top ]
 ```
 
-Rules:
 - Take the top of the **highest non-empty stack**; the rest of that stack goes to the narrator as context, so one line can cover several events.
 - **Expired events are dropped** whenever a stack is read; each stack keeps only its few newest events.
-- **Check expiry twice:** before asking the narrator to write a line, and again before speaking it (writing takes 0.3–1 s).
-- **Cooldowns** (from the persona) stop it talking non-stop. Silence is fine.
+- **Expiry is measured from capture time** (`GameEvent.t` is when the screenshot was taken), not arrival time: vision takes 1–2 s, so events are already old when they arrive.
+- A new event of the **same type** as one already waiting is **merged** (counted) instead of added; one of the same type as the line on air or being written is dropped as **covered**. A burst becomes one line, and a later line can say *"…and ANOTHER one!"* from the counts.
+- **Cooldowns** (game config per event, persona per category) stop it talking non-stop. Silence is a normal outcome.
+
+#### Fluent timing
+
+What makes AI commentary sound natural is mostly **no awkward gaps and few self-interruptions** (see *Research* below). The scheduler runs every 50 ms:
+
+1. Take in new vision results and speech updates; drop expired events.
+2. **Critical event waiting?** Hard interrupt now: throw away any prepared line, ask for a short `reaction` line.
+3. **Voice speaking?**
+   - If a soft interrupt applies, prepare a line and swap it in at the next sentence boundary.
+   - Otherwise, when the remaining speech time is less than the **preparation lead time** (measured narrator + TTS latency, as a running average), **prepare the next line now**, so it's ready the moment the voice finishes.
+4. **Voice idle and the persona's `min_gap_s` has passed?** Speak the prepared line if it still passes the re-check; otherwise ask for one.
+5. **Quiet for longer than `max_silence_s`?** Ask for a `colour` line (from memory) or a filler line; the narrator may answer "nothing to say".
+6. **Re-check before speaking**: not expired, not superseded by a higher-priority event, and still true for the **latest state** (a prepared "one flask left!" is dropped if the player has since healed: the game config says `healed` `cancels` `out_of_flasks`; a change in a `context_fields` value such as `boss_name` also makes a line stale). Dropped lines are logged with the reason. Only a superseded line's events go back on the stack; stale or expired ones are gone.
+
+Lines are handed to the voice early by the measured TTS start-up time, so the audio starts as the gap ends. Critical lines never wait for a gap.
+
+**Interrupt levels**
+
+| Level | When | What happens |
+|---|---|---|
+| Hard | `critical` | Cut at the next audio chunk (target under 200 ms), persona interrupt sound, new line |
+| Soft | `high`, only if the current line is lower priority and has more than ~1.5 s left | Current sentence finishes, then the new line (prepared meanwhile) |
+| None | Everything else | Wait for the line to end; the next line is prepared as it nears its end |
+
+**Interrupt limits** (from the persona), so lines don't keep cutting each other off:
+- A line plays for at least `min_on_air_s` (about 0.8 s) before anything but `critical` can interrupt it.
+- At most `max_in_window` interrupts per `window_s` (e.g. one per 4 s), except `critical`.
+- An interrupting line can't itself be interrupted by an event of the same priority.
+
+**Modes and length**
+
+| Mode | Used for | Typical length |
+|---|---|---|
+| `reaction` | Critical moments | Very short (about 6 words) |
+| `play_by_play` | High and normal events during action | Short (about 10 words) |
+| `colour` | Quiet spells: analysis and stats from memory | Longer (about 18 words) |
+| `filler` | Scene remarks when nothing else is happening | Short |
+
+`max_words` comes from the mode and the persona's limits, shortened to `words_per_second` × `backlog_line_s` while other events are still waiting, and is enforced in code. Human commentators average about 2.8 s per line, so the defaults are about 2–4 s.
+
+**Let big moments breathe:** after a critical line, hold `after_critical_pause_s` (about 2 s) of deliberate silence, then allow a `colour` reflection ("Attempt 12, and he FINALLY has it!") if memory has something to say. Another critical event skips the pause.
 
 Example:
 ```
-t=0.0  speaking a filler line
-t=1.0  took_heavy_damage (high, ttl 2.5) → pushed
-t=2.0  big_hit_landed    (high, ttl 2.5) → pushed
-t=2.8  voice free → take big_hit_landed (newest high); took_heavy_damage goes along as context
-t=5.0  you_died (critical) → narrate now → interrupt current speech
+t=0.0  speaking a filler line (2.4 s long)
+t=1.0  took_heavy_damage (high) → pushed; filler has < 1.5 s left, so no interrupt
+t=1.6  0.8 s left < lead time → prepare a line for took_heavy_damage
+t=2.0  big_hit_landed (high) → pushed; prepared line is superseded → discard it,
+       prepare big_hit_landed with took_heavy_damage as context
+t=2.4  filler ends; min_gap_s 1.5
+t=3.9  re-check passes → "Trading blows! He took one, he gave one BACK!"
+t=5.0  you_died (critical) → hard interrupt: "OH—" + "DOWN HE GOES!", then 2 s of silence
 ```
+
+#### What the director sends the narrator
+
+A `NarrationRequest` (contract in [IMPLEMENTATION.md § Contracts](IMPLEMENTATION.md#3-contracts)): the chosen event, related events, the latest state and what changed since the last line, memory facts, recent lines, mode, word limit, delivery (hard / soft / queued) and the time after which the line must not be spoken. The narrator returns a `CommentaryLine`; the director re-checks it and hands it to voice.
+
+#### Research
+
+- **Prepare the next line while the current one plays.** Generating in parallel with speech cut mean silence between lines from about 9.5 s to 0.3 s (humans: 1.7 s) and was rated more natural by 120 listeners ([arXiv 2606.13322](https://arxiv.org/html/2606.13322v1)).
+- **Schedule by speaking duration, allow silence.** Timing the next line from the current line's length (words ÷ speaking rate) removed overlaps (from 55–97% with fixed intervals to 0%) and raised timing ratings from 2.22 to 3.50 / 5; the model could explicitly answer "wait". Models also talked about twice as much as humans, so length must be capped ([arXiv 2603.02655](https://arxiv.org/html/2603.02655)).
+- **Pick lines that fit the situation, break off for urgent ones.** Valve's dynamic dialog (Left 4 Dead) picks the most specific line for the current facts and breaks off casual talk when something urgent happens ([GDC 2012 write-up](https://emshort.blog/2012/03/16/gdc-2012-talk-on-dynamic-dialogue/)). Bark guides recommend category cooldowns and **limits on preemption** ([bark timing](https://pulsegeek.com/articles/dialogue-barks-timing-and-cooldown-best-practices/)).
+- **Broadcasters:** play-by-play covers live action, colour fills breaks ([Gerhardt 2008](https://scidok.sulb.uni-saarland.de/bitstream/20.500.11880/27131/1/Gerhardt_2008_Turn%20by%20turn_for%20repository.pdf)); deliberate silence lets big moments land, while frequent dead air is the real problem ([Joe Buck](https://awfulannouncing.com/espn/joe-buck-presses-young-broadcasters-have-confidence-not-talk.html), [shoutcasting](https://rocket-league.com/news/shalthis-says-a-lesson-in-shoutcasting-dead-air-followup)).
 
 ### 4.5 Narrator (the "mouth")
 
-Gets the chosen event plus context, **not** the screenshot:
+Gets a `NarrationRequest` from the director (the chosen event plus the context the director gathered), **not** the screenshot:
 ```
 Event: big_hit_landed (boss 27% → 18%, player HP 34)
 Also recently: took_heavy_damage
@@ -166,14 +235,16 @@ Your last lines: "He's in trouble…", "One flask left!"
 → *"ON 34 HP?! Margit's at 18%, the furthest he's got all night!"*
 
 - Sending its recent lines stops repetition.
-- Lines are kept short (persona word limit, trimmed in code).
+- Lines are kept to the request's `max_words` (trimmed in code).
 - The line keeps its event's priority and expiry.
+- It never decides timing; for `colour` and `filler` requests it may answer "nothing to say".
 
 ### 4.6 Voice
 
 - TTS: **Kokoro** (`kokoro-onnx`, default) or **Piper**, locally; ElevenLabs / OpenAI TTS via API.
 - Audio plays in **small chunks** so it can be cut off mid-sentence for critical events (target: under about 200 ms).
 - On interrupt, the persona's interrupt sound plays first ("OH—" / "…").
+- **Reports back to the director** (`SpeechStatus`): line started (with its exact audio length), about to end, finished, interrupted. A soft interrupt waits for the current sentence to finish.
 
 ### 4.7 Memory (in RAM only)
 
@@ -245,7 +316,15 @@ style: >
   You are an over-the-top boxing commentator calling an Elden Ring boss fight
   like a title bout. Short, loud, punchy. Max 15 words.
 voice: { tts_voice: am_michael, speed: 1.15 }
-chattiness: { min_gap_s: 1.5, use_filler: true }
+chattiness:
+  min_gap_s: 1.5            # pause between lines
+  max_silence_s: 6.0        # after this, a colour or filler line is allowed
+  words_per_second: 2.8     # TTS speaking rate, to turn time into words
+  max_words: { reaction: 6, play_by_play: 10, colour: 18, filler: 10 }
+  cooldown_s: { normal: 3.0, filler: 15.0 }   # since the last line of that priority
+  interrupts: { min_on_air_s: 0.8, window_s: 4.0, max_in_window: 1, soft_min_remaining_s: 1.5 }
+  after_critical_pause_s: 2.0
+  use_filler: true
 interrupt_sound: "OH—"
 examples:
   big_hit_landed: ["HUGE hit! The crowd is on its feet!", "Right on the chin!"]
@@ -260,7 +339,7 @@ style: >
   You are a solemn, poetic narrator in the style of a dark fantasy epic.
   Speak slowly, with gravitas and dry irony. Max 20 words.
 voice: { tts_voice: bm_george, speed: 0.9 }
-chattiness: { min_gap_s: 4.0, use_filler: false }
+chattiness: { min_gap_s: 4.0, max_silence_s: 15.0, words_per_second: 2.2, after_critical_pause_s: 3.5, use_filler: false }
 interrupt_sound: "…"
 event_overrides:
   healed: { ignore: true }
@@ -355,7 +434,8 @@ Ollama (separate program)            ← installed by our installer if missing; 
 
 ## 9. Testing strategy
 
-- **Director:** fake clock; tests for newest-first within a level, priority beating recency, the stack cap, expiry and interrupts.
+- **Director:** fake clock, fake voice and fake narrator; tests for newest-first within a level, priority beating recency, the stack cap, expiry from capture time, merging, interrupt levels and limits, preparing lines early, and the re-check against the latest state.
+- **Fluency report:** replays produce overlap %, mean gap, interrupts per minute and dropped events, so timing changes are judged by numbers (targets: 0% overlap, mean gap under 2 s or the persona's `min_gap_s` + 0.5 s, at most 2 non-critical interrupts per minute). `commentator/director/sim.py` runs scenarios in simulated time with a fake vision source, narrator and voice.
 - **Vision validation:** recorded model outputs → schema checks, unknown events dropped, cooldown de-duplication.
 - **Prompt and schema generation:** snapshot tests from the game config.
 - **Memory:** fight summaries and the session memory size cap, from recorded event logs.
@@ -368,6 +448,7 @@ Ollama (separate program)            ← installed by our installer if missing; 
 - Two casters in v1, or later?
 - Is vision-only death detection fast enough, or do critical events need a fast-path check?
 - Which vision model is the best default? (Decided by spike A1.)
+- Where does the recent state history live: inside the director (current plan) or in a shared timeline store in `memory/` that the director reads?
 
 ## 11. Decisions
 
